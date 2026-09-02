@@ -193,6 +193,12 @@ export async function ensureMemberRecordLinked(user: User): Promise<void> {
   if (!db || !user.email) return;
 
   const email = normalizeEmail(user.email);
+  // Client-side guard: Only allowlisted student voters should attempt to sync their member record.
+  // Authoritative server-side enforcement is guaranteed by Firestore Security Rules.
+  if (!isVoterAllowlisted(email)) {
+    return;
+  }
+
   try {
     const memberDocRef = doc(db, 'members', user.uid);
     const snap = await getDoc(memberDocRef);

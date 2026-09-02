@@ -128,19 +128,19 @@ export const AdminReadinessPage: React.FC<AdminReadinessPageProps> = ({
     });
 
     // -------------------------------------------------------------------------
-    // 2. Exact 70 Unique Voters Allowlist
+    // 2. Exact 79 Unique Voters Allowlist
     // -------------------------------------------------------------------------
     const uniqueEmails = new Set(APPROVED_VOTER_EMAILS.map((e) => normalizeEmail(e)));
     const uniqueCount = uniqueEmails.size;
-    const voterCountPassed = uniqueCount === 70;
+    const voterCountPassed = uniqueCount === 79;
 
     results.push({
       id: 'RDY-02',
       category: 'VOTERS',
-      title: 'Authoritative 70 Unique Voters Electorate',
-      description: 'Voter allowlist must contain exactly 70 unique normalized student emails',
+      title: 'Authoritative 79 Unique Voters Electorate',
+      description: 'Voter allowlist must contain exactly 79 unique normalized student emails',
       passed: voterCountPassed,
-      expected: 'Exactly 70 unique voters',
+      expected: 'Exactly 79 unique voters',
       actual: `${uniqueCount} unique voters loaded`,
       isCritical: true,
     });
@@ -169,11 +169,11 @@ export const AdminReadinessPage: React.FC<AdminReadinessPageProps> = ({
       id: 'RDY-03',
       category: 'VOTERS',
       title: 'Duplicate Email Resolution & Normalization',
-      description: 'Emails normalized (trim/lowercase) with duplicate 2410080042@klh.edu.in deduplicated to 1 entry',
+      description: 'Emails normalized (trim/lowercase) with 0 duplicates in approved production allowlist',
       passed: noApprovedDuplicates,
       expected: '0 duplicates in approved production allowlist',
       actual: noApprovedDuplicates
-        ? `0 duplicates (1 raw duplicate resolved: ${rawDuplicates.map(([e]) => e).join(', ')})`
+        ? (rawDuplicates.length > 0 ? `0 duplicates in approved list (${rawDuplicates.length} resolved)` : '0 duplicates detected')
         : `Duplicates detected: ${approvedDuplicates.map(([e]) => e).join(', ')}`,
       details: noApprovedDuplicates
         ? undefined
@@ -192,10 +192,10 @@ export const AdminReadinessPage: React.FC<AdminReadinessPageProps> = ({
       id: 'RDY-04',
       category: 'VOTERS',
       title: 'Institutional Email Format Validation',
-      description: 'All 70 voter email addresses must strictly adhere to [rollnumber]@klh.edu.in',
+      description: 'All 79 voter email addresses must strictly adhere to [id]@klh.edu.in',
       passed: allEmailsValidFormat,
-      expected: 'All 70 match [rollnumber]@klh.edu.in',
-      actual: allEmailsValidFormat ? '70 / 70 valid institutional emails' : `${malformedEmails.length} malformed emails`,
+      expected: 'All 79 match [id]@klh.edu.in',
+      actual: allEmailsValidFormat ? `${APPROVED_VOTER_EMAILS.length} / ${APPROVED_VOTER_EMAILS.length} valid institutional emails` : `${malformedEmails.length} malformed emails`,
       details: allEmailsValidFormat ? undefined : malformedEmails,
       isCritical: true,
     });
@@ -225,7 +225,7 @@ export const AdminReadinessPage: React.FC<AdminReadinessPageProps> = ({
       description: 'Every voter record must contain Name, Roll Number, Email, Batch, Department, and State',
       passed: voterDataComplete,
       expected: '0 records with missing fields',
-      actual: voterDataComplete ? '70 / 70 complete voter records' : `${missingDataVoters.length} incomplete records`,
+      actual: voterDataComplete ? `${APPROVED_VOTERS.length} / ${APPROVED_VOTERS.length} complete voter records` : `${missingDataVoters.length} incomplete records`,
       details: voterDataComplete ? undefined : missingDataVoters,
       isCritical: true,
     });
@@ -241,9 +241,9 @@ export const AdminReadinessPage: React.FC<AdminReadinessPageProps> = ({
       id: 'RDY-06',
       category: 'VOTERS',
       title: 'Roll Number Uniqueness',
-      description: 'Every registered voter must have a globally unique student roll number',
+      description: 'Every registered voter must have a globally unique student identifier/roll number',
       passed: rollNumbersUnique,
-      expected: '70 unique roll numbers',
+      expected: `${APPROVED_VOTERS.length} unique roll numbers`,
       actual: `${uniqueRollNumbers.size} unique roll numbers detected`,
       isCritical: true,
     });
@@ -295,7 +295,7 @@ export const AdminReadinessPage: React.FC<AdminReadinessPageProps> = ({
       id: 'RDY-08',
       category: 'CANDIDATES',
       title: 'Official 3 Candidates Specification',
-      description: 'Exactly 3 candidates: Zeus (Anshul Raj), Athena (Paridhi Gupta), Poseidon (Granth Jigneshbhai Mangukiya)',
+      description: 'Exactly 3 candidates: Zeus/ANUBIS (Anshul Raj), Athena/ISiS (Paridhi Gupta), Poseidon/HORUS (Aryan Yadav)',
       passed: exactly3Candidates && candidateDataComplete,
       expected: '3 candidates with full manifestos',
       actual: exactly3Candidates && candidateDataComplete
@@ -332,10 +332,10 @@ export const AdminReadinessPage: React.FC<AdminReadinessPageProps> = ({
       id: 'RDY-10',
       category: 'LIFECYCLE',
       title: 'Zero Initial Votes & Turnout Baseline',
-      description: 'Initial state must have 0 votes cast, 0% participation, and 70 pending voters',
+      description: `Initial state must have 0 votes cast, 0% participation, and ${APPROVED_VOTERS.length} pending voters`,
       passed: isZeroVotes,
-      expected: '0 votes cast (0% turnout, 70 remaining)',
-      actual: `${totalVotes} votes cast (${totalVotes > 0 ? (totalVotes / 70) * 100 : 0}% turnout)`,
+      expected: `0 votes cast (0% turnout, ${APPROVED_VOTERS.length} remaining)`,
+      actual: `${totalVotes} votes cast (${totalVotes > 0 ? ((totalVotes / APPROVED_VOTERS.length) * 100).toFixed(1) : 0}% turnout)`,
       isCritical: true,
     });
 
@@ -561,7 +561,7 @@ export const AdminReadinessPage: React.FC<AdminReadinessPageProps> = ({
               {isAlreadyOpenOrBeyond
                 ? `The election is currently in ${currentStatus} status. Voting controls are active on the main Admin Console.`
                 : allCriticalPassed
-                ? 'The application is verified and configured for the NISC Executive Council General Election 2026. Eligible voters: 70 | Candidates: 3 | Current status: UPCOMING. The system is waiting for the administrator to start the election.'
+                ? `The application is verified and configured for the NISC Executive Council General Election 2026. Eligible voters: ${APPROVED_VOTER_EMAILS.length} | Candidates: 3 | Current status: UPCOMING. The system is waiting for the administrator to start the election.`
                 : 'One or more mandatory production prerequisites failed verification. Review the checklist below before attempting to launch.'}
             </p>
           </div>
@@ -597,7 +597,7 @@ export const AdminReadinessPage: React.FC<AdminReadinessPageProps> = ({
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
           <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-100">
             <span className="text-[11px] font-semibold text-slate-500 block">Eligible Voters</span>
-            <p className="text-lg font-bold text-slate-900">70 Unique</p>
+            <p className="text-lg font-bold text-slate-900">{APPROVED_VOTER_EMAILS.length} Unique</p>
           </div>
           <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-100">
             <span className="text-[11px] font-semibold text-slate-500 block">Candidates</span>
@@ -721,7 +721,7 @@ export const AdminReadinessPage: React.FC<AdminReadinessPageProps> = ({
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 text-xs space-y-2 text-slate-700">
               <div className="flex justify-between">
                 <span className="text-slate-500">Eligible voters:</span>
-                <span className="font-bold text-slate-900">70</span>
+                <span className="font-bold text-slate-900">{APPROVED_VOTERS.length}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Candidates:</span>

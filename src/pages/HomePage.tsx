@@ -13,9 +13,10 @@ import {
   AlertCircle,
   FileText,
 } from 'lucide-react';
-import { AuthUserProfile, Election, ElectionStatus } from '../types';
-import { INITIAL_ELECTION, INITIAL_ELECTION_ID, INITIAL_CANDIDATES } from '../config/electionData';
+import { AuthUserProfile, Candidate, Election, ElectionStatus } from '../types';
+import { INITIAL_ELECTION, INITIAL_ELECTION_ID, INITIAL_CANDIDATES, resolveCandidateArtwork } from '../config/electionData';
 import { subscribeToElection } from '../services/electionService';
+import { CandidateDetailsModal } from '../components/voter/CandidateDetailsModal';
 
 interface HomePageProps {
   profile: AuthUserProfile;
@@ -30,6 +31,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   onSignIn,
 }) => {
   const [election, setElection] = useState<Election>(INITIAL_ELECTION);
+  const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
   const isAuthenticated = profile.role !== 'UNAUTHENTICATED';
   const isAdmin = profile.role === 'ADMIN' && profile.isAdmin;
 
@@ -210,65 +212,129 @@ export const HomePage: React.FC<HomePageProps> = ({
         </div>
       </div>
 
-      {/* Featured Candidates Preview */}
+      {/* Featured Candidates Section */}
       <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-4">
           <div>
-            <h3 className="text-lg font-bold text-slate-900 tracking-tight">
-              Standing Candidates
+            <h3 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+              Meet the Candidates
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Contesting for the NISC Executive Council Presidency
+              Contesting for the NISC Executive Council Leadership (General Election 2026)
             </p>
           </div>
           <button
             onClick={() => onNavigate('candidates')}
-            className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1 self-start sm:self-auto"
+            className="text-xs font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1 self-start sm:self-auto"
           >
-            <span>View Full Manifestos</span>
+            <span>View All Candidate Profiles</span>
             <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {INITIAL_CANDIDATES.map((candidate) => (
-            <div
-              key={candidate.id}
-              className="p-5 rounded-2xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 transition-colors flex flex-col justify-between"
-            >
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="w-10 h-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-xl shadow-xs">
-                    {candidate.icon}
-                  </div>
-                  <span
-                    className="text-[10px] font-bold px-2.5 py-0.5 rounded-full text-white uppercase tracking-wider"
-                    style={{ backgroundColor: candidate.color }}
-                  >
-                    {candidate.codename}
-                  </span>
-                </div>
-                <h4 className="font-bold text-slate-900 text-sm">{candidate.name}</h4>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  {candidate.year} • {candidate.department}
-                </p>
-                <p className="text-xs text-slate-600 mt-3 line-clamp-2 italic">
-                  "{candidate.vision}"
-                </p>
-              </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {INITIAL_CANDIDATES.map((candidate) => {
+            const houseName = candidate.house || candidate.codename;
+            const branchName = candidate.branch || candidate.department;
+            const positionName = candidate.position || candidate.contestingFor.join(' & ');
 
-              <div className="mt-4 pt-3 border-t border-slate-200/60">
-                <button
-                  onClick={() => onNavigate('candidates')}
-                  className="text-xs font-semibold text-blue-600 hover:text-blue-700"
-                >
-                  Read Manifesto →
-                </button>
+            return (
+              <div
+                key={candidate.id}
+                className="rounded-3xl border-2 border-slate-200/90 bg-white hover:border-slate-300 hover:shadow-lg transition-all p-5 sm:p-6 flex flex-col justify-between"
+                style={{
+                  borderTopColor: candidate.color,
+                  borderTopWidth: '5px',
+                }}
+              >
+                <div className="space-y-4">
+                  {/* 1. Circular Candidate Symbol / Artwork */}
+                  <div className="flex justify-center py-2">
+                    <div
+                      className="w-48 sm:w-52 md:w-56 aspect-square rounded-full overflow-hidden bg-slate-950 border-4 shadow-md flex items-center justify-center relative group transition-transform duration-300 hover:scale-[1.03]"
+                      style={{
+                        borderColor: candidate.color,
+                      }}
+                    >
+                      <img
+                        src={resolveCandidateArtwork(candidate)}
+                        alt={candidate.imageAlt || `${candidate.name} — ${houseName} candidate artwork`}
+                        className="w-full h-full object-contain"
+                        loading="lazy"
+                      />
+                    </div>
+                  </div>
+
+                  {/* 2. Candidate Identity & Credentials */}
+                  <div className="text-center space-y-1">
+                    <h4 className="font-black text-slate-900 text-lg sm:text-xl tracking-tight">
+                      {candidate.name}
+                    </h4>
+                    <div className="flex items-center justify-center gap-1.5">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                        House
+                      </span>
+                      <span
+                        className="text-xs font-black px-2.5 py-0.5 rounded-md uppercase tracking-wider flex items-center gap-1"
+                        style={{
+                          backgroundColor: candidate.colorLight || '#F1F5F9',
+                          color: candidate.color,
+                        }}
+                      >
+                        <span>{candidate.icon}</span>
+                        <span>{houseName}</span>
+                      </span>
+                    </div>
+
+                    <div className="pt-1 flex items-center justify-center gap-2 text-xs font-bold text-slate-700">
+                      <span className="px-2.5 py-0.5 rounded-md bg-slate-100 border border-slate-200">
+                        {candidate.year} | {branchName}
+                      </span>
+                    </div>
+
+                    <div className="pt-1">
+                      <span className="inline-block text-[11px] font-bold px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                        {positionName}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 3. Manifesto Preview */}
+                  <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-100 space-y-1 text-left">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                      Manifesto Vision
+                    </span>
+                    <p className="text-xs text-slate-600 leading-relaxed line-clamp-3">
+                      {candidate.vision}
+                    </p>
+                  </div>
+                </div>
+
+                {/* 4. Read Manifesto Action */}
+                <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCandidate(candidate)}
+                    className="w-full py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-black transition-colors flex items-center justify-center gap-2 shadow-xs"
+                  >
+                    <span>Read Full Manifesto</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
+
+      {/* Full Manifesto Modal on Home Page */}
+      <CandidateDetailsModal
+        candidate={selectedCandidate}
+        isOpen={Boolean(selectedCandidate)}
+        onClose={() => setSelectedCandidate(null)}
+        isSelected={false}
+        disabled={true}
+      />
     </div>
   );
 };

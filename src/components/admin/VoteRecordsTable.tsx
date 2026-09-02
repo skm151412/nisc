@@ -77,9 +77,9 @@ export const VoteRecordsTable: React.FC<VoteRecordsTableProps> = ({
             className="px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs text-slate-700 bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
           >
             <option value="ALL">All Candidates</option>
-            <option value="zeus">Zeus (Anshul Raj)</option>
-            <option value="athena">Athena (Paridhi Gupta)</option>
-            <option value="poseidon">Poseidon (Granth Mangukiya)</option>
+            <option value="athena">ISiS (Paridhi Gupta)</option>
+            <option value="zeus">ANUBIS (Anshul Raj)</option>
+            <option value="poseidon">HORUS (Aryan Yadav)</option>
           </select>
         </div>
       </div>

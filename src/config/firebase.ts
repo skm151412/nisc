@@ -29,15 +29,16 @@ export const PRODUCTION_FIREBASE_CONFIG = {
 };
 
 export const getFirebaseConfig = (): FirebaseClientConfig => {
-  const apiKey = import.meta.env.VITE_FIREBASE_API_KEY || PRODUCTION_FIREBASE_CONFIG.apiKey;
-  const authDomain = import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || PRODUCTION_FIREBASE_CONFIG.authDomain;
-  const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID || PRODUCTION_FIREBASE_CONFIG.projectId;
-  const storageBucket = import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || PRODUCTION_FIREBASE_CONFIG.storageBucket;
-  const messagingSenderId = import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || PRODUCTION_FIREBASE_CONFIG.messagingSenderId;
-  const appId = import.meta.env.VITE_FIREBASE_APP_ID || PRODUCTION_FIREBASE_CONFIG.appId;
-  const appCheckSiteKey = import.meta.env.VITE_FIREBASE_APPCHECK_SITE_KEY || '';
-  const useEmulator = import.meta.env.VITE_USE_FIREBASE_EMULATOR === 'true';
-  const firestoreDatabaseId = import.meta.env.VITE_FIREBASE_DATABASE_ID || '(default)';
+  const env = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env : (process.env as any || {});
+  const apiKey = env.VITE_FIREBASE_API_KEY || PRODUCTION_FIREBASE_CONFIG.apiKey;
+  const authDomain = env.VITE_FIREBASE_AUTH_DOMAIN || PRODUCTION_FIREBASE_CONFIG.authDomain;
+  const projectId = env.VITE_FIREBASE_PROJECT_ID || PRODUCTION_FIREBASE_CONFIG.projectId;
+  const storageBucket = env.VITE_FIREBASE_STORAGE_BUCKET || PRODUCTION_FIREBASE_CONFIG.storageBucket;
+  const messagingSenderId = env.VITE_FIREBASE_MESSAGING_SENDER_ID || PRODUCTION_FIREBASE_CONFIG.messagingSenderId;
+  const appId = env.VITE_FIREBASE_APP_ID || PRODUCTION_FIREBASE_CONFIG.appId;
+  const appCheckSiteKey = env.VITE_FIREBASE_APPCHECK_SITE_KEY || '';
+  const useEmulator = env.VITE_USE_FIREBASE_EMULATOR === 'true';
+  const firestoreDatabaseId = env.VITE_FIREBASE_DATABASE_ID || '(default)';
 
   return {
     apiKey,

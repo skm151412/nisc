@@ -10,7 +10,7 @@ import {
   Clock,
   User,
 } from 'lucide-react';
-import { INITIAL_CANDIDATES, INITIAL_ELECTION } from '../config/electionData';
+import { INITIAL_CANDIDATES, INITIAL_ELECTION, resolveCandidateArtwork } from '../config/electionData';
 import { Candidate } from '../types';
 import { CandidateDetailsModal } from '../components/voter/CandidateDetailsModal';
 
@@ -67,37 +67,44 @@ export const ElectionPage: React.FC = () => {
                   backgroundColor: candidate.colorLight,
                 }}
               >
-                <div className="flex items-start justify-between">
+                <div className="flex items-start justify-between mb-4">
+                  <div>
+                    <span
+                      className="text-[11px] font-black px-3 py-1 rounded-full text-white uppercase tracking-wider shadow-xs flex items-center gap-1.5"
+                      style={{ backgroundColor: candidate.color }}
+                    >
+                      <span>{candidate.icon}</span>
+                      <span>House: {candidate.house || candidate.codename}</span>
+                    </span>
+                  </div>
+                </div>
+
+                {/* Candidate Artwork Symbol */}
+                <div className="flex justify-center py-2 mb-4">
                   <div
-                    className="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl shadow-xs border bg-white"
+                    className="w-48 sm:w-52 md:w-56 aspect-square rounded-full overflow-hidden bg-slate-950 border-4 shadow-md flex items-center justify-center relative"
                     style={{
                       borderColor: candidate.color,
                     }}
                   >
-                    {candidate.icon}
+                    <img
+                      src={resolveCandidateArtwork(candidate)}
+                      alt={candidate.imageAlt || `${candidate.name} — ${candidate.house || candidate.codename} candidate artwork`}
+                      className="w-full h-full object-contain"
+                      loading="lazy"
+                    />
                   </div>
-                  <span
-                    className="text-[11px] font-bold px-3 py-1 rounded-full text-white uppercase tracking-wider shadow-xs"
-                    style={{ backgroundColor: candidate.color }}
-                  >
-                    {candidate.codename}
-                  </span>
                 </div>
 
-                <div className="mt-4">
-                  <h3 className="text-xl font-bold text-slate-900">{candidate.name}</h3>
-                  <p className="text-xs font-semibold text-slate-600 mt-0.5">
-                    {candidate.year} • {candidate.department} • {candidate.state}
+                <div>
+                  <h3 className="text-2xl font-black text-slate-900 tracking-tight">{candidate.name}</h3>
+                  <p className="text-xs font-bold text-slate-700 mt-1">
+                    {candidate.year} • {candidate.branch || candidate.department}
                   </p>
                   <div className="mt-2.5 flex flex-wrap gap-1.5">
-                    {candidate.contestingFor.map((pos) => (
-                      <span
-                        key={pos}
-                        className="text-[10px] font-bold px-2.5 py-0.5 rounded-md bg-white/90 text-slate-800 border border-slate-200"
-                      >
-                        {pos}
-                      </span>
-                    ))}
+                    <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-md bg-white/90 text-blue-700 border border-blue-200 shadow-2xs">
+                      {candidate.position || candidate.contestingFor.join(' & ')}
+                    </span>
                   </div>
                 </div>
               </div>

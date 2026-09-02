@@ -4,9 +4,13 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // =========================================================================
-    // NISC ELECTION SYSTEM - SECURITY RULES (PURE SPARK PLAN)
+    // NISC ELECTION SYSTEM - SECURITY RULES (ZERO-TRUST REMEDIATED)
     // Architecture: Zero-Trust Client Model & Principle of Least Privilege
-    // All authorization, state transitions, and voting invariants enforced by Firestore Rules
+    // Enforces: SEC-01 (Authoritative approvedVoters registry),
+    //           SEC-02 (Zero client candidate write/inflation permissions),
+    //           SEC-03 (Private live tallies, protected results),
+    //           SEC-04 (Admin audit access only on ballots),
+    //           State transition enforcement (Voting permitted strictly when LIVE).
     // =========================================================================
 
     // Basic Authentication & Verification Predicates
@@ -18,15 +22,20 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.email_verified == true;
     }
 
+    function normEmail(email) {
+      return email.trim().lower();
+    }
+
+    function callerEmail() {
+      return normEmail(request.auth.token.email);
+    }
+
     // Super Administrator Predicate
-    // Authorized only for the designated administrative identities:
-    // - skm151412@gmail.com
-    // - mohiuddinahmad9abcs@gmail.com
-    // with email_verified == true, or verified server-assigned custom claim admin == true,
-    // or verified existence in /admins/{uid}.
+    // Authorized strictly for designated administrative identities with verified email,
+    // custom admin claims, or verified entry in /admins/{uid}.
     function isSuperAdmin() {
       return isSignedIn() && (
-        (request.auth.token.email in ['skm151412@gmail.com', 'mohiuddinahmad9abcs@gmail.com'] && request.auth.token.email_verified == true) ||
+        (callerEmail() in ['skm151412@gmail.com', 'mohiuddinahmad9abcs@gmail.com'] && request.auth.token.email_verified == true) ||
         request.auth.token.admin == true ||
         exists(/databases/$(database)/documents/admins/$(request.auth.uid))
       );
@@ -43,6 +52,21 @@ service cloud.firestore {
     }
 
     // =========================================================================
+    // 0. APPROVED VOTERS REGISTRY (/approvedVoters/{email})
+    // Authoritative backend voter registry indexed by normalized student email.
+    // Ordinary voters CANNOT create, modify, or delete registry records.
+    // =========================================================================
+    match /approvedVoters/{email} {
+      // Super admin can read all registry entries;
+      // An authenticated voter can only read their own registry entry.
+      allow get: if isSuperAdmin() || (isSignedIn() && normEmail(email) == callerEmail());
+      allow list: if isSuperAdmin();
+
+      // Only Super Admin can write (create, update, delete) approved voter records
+      allow write: if isSuperAdmin();
+    }
+
+    // =========================================================================
     // 1. MEMBERS COLLECTION (/members/{uid})
     // Indexed strictly by Firebase Authentication UID.
     // =========================================================================
@@ -52,18 +76,41 @@ service cloud.firestore {
       allow get: if isSuperAdmin() || isMemberOwner(uid);
 
       // Ordinary voters are STRICTLY FORBIDDEN from listing or querying the collection.
-      // This protects the voter list against scraping or enumeration attacks.
       allow list: if isSuperAdmin();
 
-      // Creation allowed for self during first sign-in/seeding or super admin
-      allow create: if isSuperAdmin() || (isMemberOwner(uid) && request.resource.data.hasVoted == false);
+      // Creation:
+      // Super Admin can create member records.
+      // An authenticated user can ONLY create their own member record IF:
+      // 1. request.auth.uid == uid
+      // 2. Email is verified
+      // 3. Their normalized email EXACTLY exists in /approvedVoters/{normalizedEmail}
+      // 4. The approvedVoters record has eligible == true
+      // 5. The created record's email matches callerEmail()
+      // 6. hasVoted is false
+      // 7. eligible is true
+      // 8. No admin or role escalation
+      allow create: if isSuperAdmin() || (
+        isMemberOwner(uid) &&
+        isEmailVerified() &&
+        exists(/databases/$(database)/documents/approvedVoters/$(callerEmail())) &&
+        get(/databases/$(database)/documents/approvedVoters/$(callerEmail())).data.eligible == true &&
+        normEmail(request.resource.data.email) == callerEmail() &&
+        request.resource.data.hasVoted == false &&
+        request.resource.data.eligible == true &&
+        (!('role' in request.resource.data) || request.resource.data.role == 'VOTER') &&
+        (!('admin' in request.resource.data) || request.resource.data.admin == false)
+      );
 
-      // Voter can only update their own record to mark hasVoted: true upon voting
+      // Voter can only update their own record to mark hasVoted: true upon voting.
+      // CANNOT change hasVoted from true back to false.
+      // CANNOT change eligible, email, rollNumber, batch, department, role, admin.
       allow update: if isSuperAdmin() || (
         isMemberOwner(uid) &&
         resource.data.hasVoted == false &&
         request.resource.data.hasVoted == true &&
+        resource.data.eligible == true &&
         request.resource.data.eligible == true &&
+        resource.data.email == request.resource.data.email &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hasVoted', 'receiptId', 'votedAt', 'updatedAt', 'lastLoginAt'])
       );
 
@@ -98,24 +145,26 @@ service cloud.firestore {
         // Authenticated voters can read candidate details (vision, pillars, codename).
         allow get, list: if isSignedIn();
 
-        // Admin can manage candidates
-        allow create, delete: if isSuperAdmin();
-
-        // Increment voteCount by 1 during active voting or admin update
-        allow update: if isSuperAdmin() || (
-          isSignedIn() &&
-          (get(/databases/$(database)/documents/elections/$(electionId)).data.status == 'LIVE' ||
-           get(/databases/$(database)/documents/elections/$(electionId)).data.status == 'OPEN') &&
-          request.resource.data.voteCount == resource.data.voteCount + 1 &&
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['voteCount', 'updatedAt'])
-        );
+        // STRICT SEC-02 REMEDIATION:
+        // Ordinary clients have ZERO write permissions on candidate documents.
+        // No client-side voteCount increments are permitted under any circumstance.
+        allow write: if isSuperAdmin();
       }
 
       // =======================================================================
-      // 4b. RESULTS SUBCOLLECTION (/elections/{electionId}/results/{resultDoc})
+      // 4b. TALLIES SUBCOLLECTION (/elections/{electionId}/tallies/{candidateId})
+      // SEC-03: Real-time vote tallies are strictly private.
+      // Ordinary voters CANNOT read or write live tallies at any time.
+      // =======================================================================
+      match /tallies/{candidateId} {
+        allow read, write: if isSuperAdmin();
+      }
+
+      // =======================================================================
+      // 4c. RESULTS SUBCOLLECTION (/elections/{electionId}/results/{resultDoc})
       // Official aggregate election results summary.
       // Strictly protected against pre-publication leakage:
-      // Visible to authenticated voters ONLY AFTER results are officially published.
+      // Visible to authenticated voters ONLY AFTER election is FINISHED or RESULTS.
       // =======================================================================
       match /results/{resultDoc} {
         // Super admin can always read;
@@ -140,17 +189,29 @@ service cloud.firestore {
       // Only Super Admin can read ballots for auditability and verification.
       allow read: if isSuperAdmin();
 
-      // Ballot creation: Voter can create their ballot during an active election
+      // Ballot creation: Voter can create their ballot ONLY IF:
+      // 1. Authenticated with verified email
+      // 2. voterUid == request.auth.uid
+      // 3. voterEmail matches authenticated email
+      // 4. Exists in /approvedVoters/{email} with eligible == true
+      // 5. Exists in /members/{uid} with eligible == true and hasVoted == false
+      // 6. Valid candidate ID in ['zeus', 'athena', 'poseidon']
+      // 7. Election status is strictly 'LIVE'
       allow create: if isSignedIn() &&
+        isEmailVerified() &&
         request.resource.data.voterUid == request.auth.uid &&
-        request.resource.data.candidateId in ['zeus', 'athena', 'poseidon'] &&
-        (get(/databases/$(database)/documents/elections/$(request.resource.data.electionId)).data.status == 'LIVE' ||
-         get(/databases/$(database)/documents/elections/$(request.resource.data.electionId)).data.status == 'OPEN') &&
+        normEmail(request.resource.data.voterEmail) == callerEmail() &&
+        exists(/databases/$(database)/documents/approvedVoters/$(callerEmail())) &&
+        get(/databases/$(database)/documents/approvedVoters/$(callerEmail())).data.eligible == true &&
+        exists(/databases/$(database)/documents/members/$(request.auth.uid)) &&
         get(/databases/$(database)/documents/members/$(request.auth.uid)).data.eligible == true &&
-        get(/databases/$(database)/documents/members/$(request.auth.uid)).data.hasVoted == false;
+        get(/databases/$(database)/documents/members/$(request.auth.uid)).data.hasVoted == false &&
+        request.resource.data.candidateId in ['zeus', 'athena', 'poseidon'] &&
+        get(/databases/$(database)/documents/elections/$(request.resource.data.electionId)).data.status == 'LIVE';
 
-      // Ballots are strictly immutable
-      allow update, delete: if false;
+      // Ballots are strictly immutable for normal users; deletion only permitted for Super Admin vote resets
+      allow update: if false;
+      allow delete: if isSuperAdmin();
     }
 
     // =========================================================================
@@ -185,8 +246,9 @@ service cloud.firestore {
         lockId == request.resource.data.electionId + '_' + request.auth.uid &&
         !exists(/databases/$(database)/documents/voteLocks/$(lockId));
 
-      // Locks cannot be mutated or deleted
-      allow update, delete: if false;
+      // Locks cannot be mutated; deletion only permitted for Super Admin vote resets
+      allow update: if false;
+      allow delete: if isSuperAdmin();
     }
   }
 }

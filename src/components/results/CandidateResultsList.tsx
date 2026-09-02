@@ -1,6 +1,7 @@
 import React from 'react';
 import { Award, Trophy, Check, BarChart2 } from 'lucide-react';
 import { CandidateResultSummary } from '../../types';
+import { resolveCandidateArtwork } from '../../config/electionData';
 
 interface CandidateResultsListProps {
   candidates: CandidateResultSummary[];
@@ -45,13 +46,14 @@ export const CandidateResultsList: React.FC<CandidateResultsListProps> = ({
                 {/* Left: Avatar, Codename, Name, Department */}
                 <div className="flex items-start sm:items-center gap-3.5">
                   <div
-                    className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl shrink-0 shadow-xs border"
-                    style={{
-                      backgroundColor: candidate.colorLight || '#FEF3C7',
-                      borderColor: candidate.color,
-                    }}
+                    className="w-14 h-14 rounded-full overflow-hidden bg-slate-950 border-2 flex items-center justify-center shrink-0 shadow-xs"
+                    style={{ borderColor: candidate.color }}
                   >
-                    {candidate.icon || '⚡'}
+                    <img
+                      src={resolveCandidateArtwork(candidate)}
+                      alt={candidate.imageAlt || `${candidate.name} — ${candidate.house || candidate.codename} candidate artwork`}
+                      className="w-full h-full object-contain"
+                    />
                   </div>
 
                   <div className="space-y-0.5">
@@ -60,7 +62,7 @@ export const CandidateResultsList: React.FC<CandidateResultsListProps> = ({
                         className="text-[11px] font-mono font-bold px-2 py-0.5 rounded-md uppercase tracking-wider text-white shadow-xs"
                         style={{ backgroundColor: candidate.color }}
                       >
-                        {candidate.codename}
+                        House: {candidate.house || candidate.codename}
                       </span>
                       {candidate.isWinner && (
                         <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 border border-amber-300 flex items-center gap-1">
@@ -76,7 +78,7 @@ export const CandidateResultsList: React.FC<CandidateResultsListProps> = ({
                     </div>
                     <h3 className="text-base font-bold text-slate-900">{candidate.name}</h3>
                     <p className="text-xs text-slate-500">
-                      {candidate.department} • {candidate.year}
+                      {candidate.branch || candidate.department} • {candidate.year}
                     </p>
                   </div>
                 </div>

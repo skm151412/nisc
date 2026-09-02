@@ -11,7 +11,7 @@
 import { doc, getDoc, collection, getDocs, onSnapshot, Unsubscribe } from 'firebase/firestore';
 import { db } from './firebase';
 import { Election, Candidate, Member, ElectionStatus, ElectionResultsSummary } from '../types';
-import { INITIAL_ELECTION, INITIAL_CANDIDATES, INITIAL_ELECTION_ID } from '../config/electionData';
+import { INITIAL_ELECTION, INITIAL_CANDIDATES, INITIAL_ELECTION_ID, resolveCandidateArtwork } from '../config/electionData';
 import { logger } from '../utils/logger';
 
 /**
@@ -158,9 +158,27 @@ export async function getCandidates(electionId: string = INITIAL_ELECTION_ID): P
       const candidates: Candidate[] = [];
       snapshot.forEach((docSnap) => {
         const d = docSnap.data() as Candidate;
+        const initialMatch = INITIAL_CANDIDATES.find(
+          (ic) =>
+            ic.id === docSnap.id ||
+            ic.slug === d.slug ||
+            ic.house?.toLowerCase() === d.house?.toLowerCase() ||
+            ic.name?.toLowerCase() === d.name?.toLowerCase()
+        );
+        const resolvedImage = resolveCandidateArtwork({
+          id: docSnap.id,
+          name: d.name,
+          codename: d.codename,
+          house: d.house,
+          image: d.image || initialMatch?.image,
+        });
         candidates.push({
+          ...initialMatch,
           ...d,
           id: docSnap.id,
+          image: resolvedImage,
+          imageUrl: resolvedImage,
+          imageAlt: d.imageAlt || initialMatch?.imageAlt || `${d.name} candidate artwork`,
           // Strict security: Zero out voteCount on client side during election
           voteCount: 0,
         });

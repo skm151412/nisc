@@ -24,6 +24,7 @@ import { db } from './firebase';
 import { VoteRequest, VoteResponse, AuthUserProfile } from '../types';
 import { logger } from '../utils/logger';
 import { INITIAL_ELECTION_ID } from '../config/electionData';
+import { isFrontendCompromised, triggerFrontendRecovery } from './antiInspection';
 
 // User-Facing Controlled Error Catalog
 export const ERROR_MESSAGES = {
@@ -115,6 +116,11 @@ export async function submitBallotVote(
   payload: VoteRequest,
   profile?: AuthUserProfile
 ): Promise<VoteResponse> {
+  if (isFrontendCompromised()) {
+    triggerFrontendRecovery();
+    throw new Error('Session verification failed. Reloading election portal...');
+  }
+
   const { electionId, candidateId } = payload;
 
   if (!electionId) {
@@ -185,6 +191,13 @@ export async function submitBallotVote(
           };
         }
 
+        const normEmail = (profile.email || '').trim().toLowerCase();
+        const approvedRef = doc(db, 'approvedVoters', normEmail);
+        const approvedSnap = await tx.get(approvedRef);
+        if (!approvedSnap.exists() || approvedSnap.data()?.eligible !== true) {
+          throw new Error(ERROR_MESSAGES.NOT_ELIGIBLE);
+        }
+
         const candidateSnap = await tx.get(candidateRef);
         if (!candidateSnap.exists()) {
           throw new Error(ERROR_MESSAGES.INVALID_CANDIDATE);
@@ -202,7 +215,7 @@ export async function submitBallotVote(
         tx.set(ballotRef, {
           electionId,
           voterUid: profile.uid,
-          voterEmail: profile.email || '',
+          voterEmail: normEmail,
           candidateId,
           receiptId: generatedReceiptId,
           createdAt: serverTimestamp(),
@@ -215,18 +228,16 @@ export async function submitBallotVote(
           updatedAt: serverTimestamp(),
         });
 
-        tx.update(candidateRef, {
-          voteCount: increment(1),
-          updatedAt: serverTimestamp(),
-        });
+        // SEC-02 REMEDIATION:
+        // Candidates collection is strictly admin-writable to prevent voteCount tampering.
+        // The authoritative sealed vote is committed to /ballots above.
 
         tx.set(auditRef, {
           action: 'VOTE_CAST',
           actorUid: profile.uid,
-          actorEmail: profile.email || '',
+          actorEmail: normEmail,
           electionId,
           metadata: {
-            candidateId,
             receiptId: generatedReceiptId,
           },
           createdAt: serverTimestamp(),
@@ -241,27 +252,23 @@ export async function submitBallotVote(
 
       return txResult;
     } catch (error: unknown) {
-      logger.warn({
-        message: 'Direct Firestore transaction returned notice, checking local engine',
+      logger.error({
+        message: 'Direct Firestore voting transaction failed',
         context: 'VotingService',
         error,
       });
 
-      const errString = error instanceof Error ? error.message : String(error);
-      if (
-        errString.includes('temporarily paused') ||
-        errString.includes('not started yet') ||
-        errString.includes('closed for this election') ||
-        errString.includes(ERROR_MESSAGES.NOT_ELIGIBLE) ||
-        errString.includes(ERROR_MESSAGES.ELECTION_NOT_OPEN) ||
-        errString.includes(ERROR_MESSAGES.INVALID_CANDIDATE)
-      ) {
-        throw error;
-      }
+      // SEC-05 REMEDIATION:
+      // Authoritative backend errors MUST be propagated to the caller.
+      // NEVER silently swallow the error or fall back to an in-memory fake vote!
+      throw error;
     }
   }
 
-  // 2. High-Security In-Memory Transaction Engine (Used in tests or fallback)
+  // 2. High-Security In-Memory Transaction Engine (Used ONLY in offline test environments where !db)
+  if (db) {
+    throw new Error(ERROR_MESSAGES.GENERAL_ERROR);
+  }
   if (!profile || profile.role === 'UNAUTHENTICATED') {
     throw new Error(ERROR_MESSAGES.UNAUTHENTICATED);
   }

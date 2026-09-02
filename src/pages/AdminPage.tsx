@@ -16,6 +16,7 @@ import {
   Percent,
   UserCheck,
   AlertOctagon,
+  RotateCcw,
 } from 'lucide-react';
 import { AuthUserProfile, ElectionStatus } from '../types';
 import {
@@ -28,10 +29,11 @@ import {
   updateElectionStatus,
   exportParticipationCsv,
   getAdminAuditLogs,
+  resetAllVotes,
 } from '../services/adminService';
 import { subscribeToElection } from '../services/electionService';
 import { AuditLog } from '../types/audit';
-import { DESIGNATED_ADMIN_EMAIL, isAdminEmail } from '../config/voterAllowlist';
+import { DESIGNATED_ADMIN_EMAIL, isAdminEmail, APPROVED_VOTERS } from '../config/voterAllowlist';
 import { INITIAL_ELECTION_ID } from '../config/electionData';
 import { ElectionStatusControl } from '../components/admin/ElectionStatusControl';
 import { CandidateResultsCard } from '../components/admin/CandidateResultsCard';
@@ -39,6 +41,7 @@ import { VoteRecordsTable } from '../components/admin/VoteRecordsTable';
 import { VoterParticipationTable } from '../components/admin/VoterParticipationTable';
 import { AdminAuditLogView } from '../components/admin/AdminAuditLogView';
 import { StatusTransitionModal } from '../components/admin/StatusTransitionModal';
+import { ResetVotesModal } from '../components/admin/ResetVotesModal';
 import { logger } from '../utils/logger';
 
 interface AdminPageProps {
@@ -69,6 +72,11 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   // Transition modal state
   const [targetTransitionStatus, setTargetTransitionStatus] = useState<ElectionStatus | null>(null);
   const [isProcessingTransition, setIsProcessingTransition] = useState<boolean>(false);
+
+  // Reset Votes modal state
+  const [isResetModalOpen, setIsResetModalOpen] = useState<boolean>(false);
+  const [isProcessingReset, setIsProcessingReset] = useState<boolean>(false);
+  const [resetSuccessMessage, setResetSuccessMessage] = useState<string | null>(null);
 
   const loadAllAdminData = useCallback(async () => {
     if (!isAuthorizedAdmin) return;
@@ -160,6 +168,24 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     }
   };
 
+  const handleConfirmResetVotes = async () => {
+    setIsProcessingReset(true);
+    setErrorMsg(null);
+    try {
+      const result = await resetAllVotes(INITIAL_ELECTION_ID, profile);
+      setIsResetModalOpen(false);
+      setResetSuccessMessage(result.message || 'All votes have been reset successfully.');
+      // Refresh admin dashboard datasets immediately
+      await loadAllAdminData();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to reset votes';
+      setErrorMsg(msg);
+      throw err;
+    } finally {
+      setIsProcessingReset(false);
+    }
+  };
+
   // Immediate authorization barrier
   if (!isAuthorizedAdmin) {
     return (
@@ -185,7 +211,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     );
   }
 
-  const totalVoters = stats?.totalEligibleVoters || 70;
+  const totalVoters = stats?.totalEligibleVoters || APPROVED_VOTERS.length;
   const votesCast = stats?.votesCast ?? voteRecords.length;
   const remaining = Math.max(0, totalVoters - votesCast);
   const participationRate = totalVoters > 0 ? ((votesCast / totalVoters) * 100).toFixed(1) : '0.0';
@@ -228,6 +254,20 @@ export const AdminPage: React.FC<AdminPageProps> = ({
 
           <button
             type="button"
+            id="admin-reset-votes-btn"
+            onClick={() => {
+              setResetSuccessMessage(null);
+              setIsResetModalOpen(true);
+            }}
+            disabled={isProcessingReset}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-600/90 hover:bg-rose-600 text-white text-xs font-semibold border border-rose-500 transition-colors shadow-xs"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Reset Votes</span>
+          </button>
+
+          <button
+            type="button"
             id="admin-signout-btn"
             onClick={onSignOut}
             className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold border border-slate-700 transition-colors"
@@ -237,6 +277,26 @@ export const AdminPage: React.FC<AdminPageProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Success Notification Banner for Vote Reset */}
+      {resetSuccessMessage && (
+        <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-300 text-emerald-950 flex items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-2.5">
+            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+            <div>
+              <p className="text-xs sm:text-sm font-bold">{resetSuccessMessage}</p>
+              <p className="text-xs text-emerald-700">All ballots cleared, voter participation unlocked, and candidate tallies reset to 0.</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setResetSuccessMessage(null)}
+            className="text-xs font-bold text-emerald-800 hover:text-emerald-950 px-2 py-1 rounded-lg hover:bg-emerald-100 transition-colors"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Live Election Status Banner (Section 19 & 22) */}
       {currentStatus === ElectionStatus.OPEN && (
@@ -406,7 +466,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         isLoading={isLoading}
       />
 
-      {/* 4. Voter Participation Table (All 70 Members) */}
+      {/* 4. Voter Participation Table (All Eligible Members) */}
       <VoterParticipationTable
         voters={participation}
         isLoading={isLoading}
@@ -420,6 +480,34 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         isLoading={isLoading}
       />
 
+      {/* 6. Administrative Danger Zone: Reset Votes */}
+      <div className="bg-white rounded-3xl border border-rose-200 p-6 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 text-rose-700 font-bold text-sm">
+              <RotateCcw className="w-4 h-4 text-rose-600" />
+              <span>Danger Zone: Reset All Election Votes</span>
+            </div>
+            <p className="text-xs text-slate-600 max-w-2xl leading-relaxed">
+              Permanently purges all cast ballots, clears vote locks, resets all candidate counts to 0, and restores voter status so eligible voters can vote again. The election state ({currentStatus}) and candidate profiles remain intact.
+            </p>
+          </div>
+          <button
+            type="button"
+            id="admin-danger-zone-reset-btn"
+            onClick={() => {
+              setResetSuccessMessage(null);
+              setIsResetModalOpen(true);
+            }}
+            disabled={isProcessingReset}
+            className="shrink-0 flex items-center gap-2 px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs shadow-sm transition-all cursor-pointer disabled:opacity-50"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Reset All Votes</span>
+          </button>
+        </div>
+      </div>
+
       {/* Confirmation Modal for State Transitions */}
       <StatusTransitionModal
         isOpen={targetTransitionStatus !== null}
@@ -428,6 +516,15 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         isProcessing={isProcessingTransition}
         onConfirm={handleConfirmTransition}
         onCancel={() => setTargetTransitionStatus(null)}
+      />
+
+      {/* Confirmation Modal for Vote Reset */}
+      <ResetVotesModal
+        isOpen={isResetModalOpen}
+        onClose={() => setIsResetModalOpen(false)}
+        onConfirm={handleConfirmResetVotes}
+        isProcessing={isProcessingReset}
+        adminEmail={profile.email}
       />
     </div>
   );

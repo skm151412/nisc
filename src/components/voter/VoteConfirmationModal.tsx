@@ -1,6 +1,7 @@
 import React from 'react';
 import { Vote, AlertTriangle, ShieldCheck, Lock, RefreshCw, X } from 'lucide-react';
 import { Candidate, AuthUserProfile } from '../../types';
+import { resolveCandidateArtwork } from '../../config/electionData';
 
 interface VoteConfirmationModalProps {
   candidate: Candidate | null;
@@ -60,28 +61,29 @@ export const VoteConfirmationModal: React.FC<VoteConfirmationModalProps> = ({
         <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
           <div className="flex items-center gap-3">
             <div
-              className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl shadow-xs"
-              style={{
-                backgroundColor: candidate.colorLight || '#F1F5F9',
-                color: candidate.color,
-              }}
+              className="w-14 h-14 rounded-full overflow-hidden bg-slate-950 border-2 border-slate-300 flex items-center justify-center shrink-0 shadow-xs"
+              style={{ borderColor: candidate.color }}
             >
-              {candidate.icon}
+              <img
+                src={resolveCandidateArtwork(candidate)}
+                alt={candidate.imageAlt || `${candidate.name} — ${candidate.house || candidate.codename} candidate artwork`}
+                className="w-full h-full object-contain"
+              />
             </div>
             <div>
               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
                 You have selected:
               </span>
-              <div className="flex items-center gap-2">
-                <span className="text-base font-bold text-slate-900">
-                  {candidate.codename}
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className="text-base font-black text-slate-900">
+                  {candidate.name}
                 </span>
-                <span className="text-xs text-slate-600 font-medium">
-                  ({candidate.name})
+                <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-slate-200/70 text-slate-700">
+                  {candidate.house || candidate.codename}
                 </span>
               </div>
-              <p className="text-[11px] text-slate-500">
-                {candidate.year} • {candidate.department}
+              <p className="text-[11px] text-slate-600 font-medium mt-0.5">
+                {candidate.year} • {candidate.branch || candidate.department}
               </p>
             </div>
           </div>

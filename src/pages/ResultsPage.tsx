@@ -18,6 +18,7 @@ import {
   AuthUserProfile,
 } from '../types';
 import { INITIAL_ELECTION, INITIAL_ELECTION_ID } from '../config/electionData';
+import { APPROVED_VOTER_EMAILS } from '../config/voterAllowlist';
 import {
   subscribeToElection,
   getElectionResults,
@@ -127,7 +128,7 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ profile, onNavigate })
 
   // Fallback fallback if results summary document is compiling
   const totalCast = results?.totalVotesCast ?? 0;
-  const totalEligible = results?.totalEligibleVoters ?? 70;
+  const totalEligible = results?.totalEligibleVoters ?? APPROVED_VOTER_EMAILS.length;
   const didNotVote = results?.didNotVote ?? Math.max(0, totalEligible - totalCast);
   const turnout = results?.participationPercentage ?? (totalEligible > 0 ? Number(((totalCast / totalEligible) * 100).toFixed(1)) : 0);
 

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Trophy, Award, Users, AlertCircle, ShieldCheck } from 'lucide-react';
 import { ElectionWinnerInfo, CandidateResultSummary } from '../../types';
+import { resolveCandidateArtwork } from '../../config/electionData';
 
 interface WinnerCardProps {
   winnerInfo: ElectionWinnerInfo;
@@ -97,13 +98,16 @@ export const WinnerCard: React.FC<WinnerCardProps> = ({ winnerInfo, totalVotesCa
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-5">
         <div className="flex items-center gap-3">
           <div
-            className="w-14 h-14 rounded-2xl flex items-center justify-center text-3xl shadow-sm border"
+            className="w-16 h-16 rounded-full overflow-hidden bg-slate-950 flex items-center justify-center text-3xl shadow-sm border-2 shrink-0"
             style={{
-              backgroundColor: 'rgba(255, 255, 255, 0.1)',
               borderColor: winner.color,
             }}
           >
-            🏆
+            <img
+              src={resolveCandidateArtwork(winner)}
+              alt={winner.imageAlt || `${winner.name} — ${winner.house || winner.codename} candidate artwork`}
+              className="w-full h-full object-contain"
+            />
           </div>
           <div>
             <span className="text-[10px] font-mono font-bold tracking-widest text-amber-400 uppercase">
@@ -124,7 +128,7 @@ export const WinnerCard: React.FC<WinnerCardProps> = ({ winnerInfo, totalVotesCa
               color: '#FFFFFF',
             }}
           >
-            {winner.codename}
+            House: {winner.house || winner.codename}
           </span>
           <span className="text-xs font-bold px-3 py-1.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
             Winner
@@ -138,7 +142,7 @@ export const WinnerCard: React.FC<WinnerCardProps> = ({ winnerInfo, totalVotesCa
             {winner.name}
           </h3>
           <p className="text-xs sm:text-sm text-slate-300">
-            {winner.department} • {winner.year} • North India Student Cell
+            {winner.branch || winner.department} • {winner.year} • North India Student Cell
           </p>
           <p className="text-xs text-slate-400 italic pt-1 leading-relaxed">
             "{announcementStatement}"

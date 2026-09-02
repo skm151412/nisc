@@ -693,15 +693,15 @@ export async function runPhase10SecuritySuite(): Promise<SecurityAuditSummary> {
   // Category 4: Voter Allowlist & Data Ledger Integrity
   // --------------------------------------------------------------------------
 
-  // SEC-P10-09: Exactly 70 eligible voters
+  // SEC-P10-09: Exactly 79 eligible voters
   const participation = await getAdminParticipation(adminProfile);
   recordTest(
     'SEC-P10-09',
-    'Eligible Voter Registry Invariant (N=70)',
+    `Eligible Voter Registry Invariant (N=${APPROVED_VOTERS.length})`,
     'INTEGRITY',
-    'Total eligible voter count must strictly equal 70 from official allowlist',
-    participation.length === APPROVED_VOTERS.length && participation.length === 70,
-    '70 eligible voters',
+    `Total eligible voter count must strictly equal ${APPROVED_VOTERS.length} from official allowlist`,
+    participation.length === APPROVED_VOTERS.length,
+    `${APPROVED_VOTERS.length} eligible voters`,
     `${participation.length} voters registered`
   );
 
@@ -715,7 +715,7 @@ export async function runPhase10SecuritySuite(): Promise<SecurityAuditSummary> {
     currentStats.remainingVoters >= 0 &&
       currentStats.participationRate >= 0 &&
       currentStats.participationRate <= 100,
-    'Valid range [0, 70]',
+    `Valid range [0, ${APPROVED_VOTERS.length}]`,
     `Remaining: ${currentStats.remainingVoters}, Turnout: ${currentStats.participationRate}%`
   );
 

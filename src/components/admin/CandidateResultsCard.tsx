@@ -1,6 +1,6 @@
 import React from 'react';
 import { Award, CheckCircle, ShieldCheck, Trophy, AlertTriangle } from 'lucide-react';
-import { INITIAL_CANDIDATES } from '../../config/electionData';
+import { INITIAL_CANDIDATES, resolveCandidateArtwork } from '../../config/electionData';
 
 interface CandidateResultsCardProps {
   candidates: Record<string, { id: string; name: string; codename: string; voteCount: number }>;
@@ -103,13 +103,16 @@ export const CandidateResultsCard: React.FC<CandidateResultsCardProps> = ({
                   <h3 className="text-sm font-bold text-slate-900 mt-1.5">{cand.name}</h3>
                 </div>
                 <div
-                  className="w-8 h-8 rounded-xl flex items-center justify-center text-base font-bold shadow-xs border"
+                  className="w-10 h-10 rounded-full overflow-hidden bg-slate-950 flex items-center justify-center shadow-xs border-2 shrink-0"
                   style={{
-                    backgroundColor: cand.colorLight || '#FEF3C7',
                     borderColor: cand.color,
                   }}
                 >
-                  {cand.icon || '⚡'}
+                  <img
+                    src={resolveCandidateArtwork(cand)}
+                    alt={cand.name}
+                    className="w-full h-full object-contain"
+                  />
                 </div>
               </div>
 

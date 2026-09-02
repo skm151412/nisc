@@ -23,16 +23,21 @@ import {
   serverTimestamp,
   orderBy,
   limit as firestoreLimit,
+  writeBatch,
+  deleteDoc,
+  addDoc,
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { db, auth } from './firebase';
+import { resetInMemoryVotingState } from './votingService';
 import {
   ElectionStatus,
   AuthUserProfile,
   AuditLog,
 } from '../types';
 import { DESIGNATED_ADMIN_EMAIL, APPROVED_VOTERS, isAdminEmail } from '../config/voterAllowlist';
-import { INITIAL_CANDIDATES, INITIAL_ELECTION_ID } from '../config/electionData';
+import { INITIAL_CANDIDATES, INITIAL_ELECTION_ID, resolveCandidateArtwork } from '../config/electionData';
 import { logger } from '../utils/logger';
+import { isFrontendCompromised, triggerFrontendRecovery } from './antiInspection';
 
 export interface AdminElectionStats {
   electionId: string;
@@ -185,6 +190,11 @@ export async function updateElectionStatus(
   electionId: string = INITIAL_ELECTION_ID,
   profile?: AuthUserProfile
 ): Promise<{ success: boolean; status: ElectionStatus; electionId: string }> {
+  if (isFrontendCompromised()) {
+    triggerFrontendRecovery();
+    throw new Error('Administrative session verification failed. Reloading portal...');
+  }
+
   assertAdminRole(profile);
 
   // Direct Firestore update with admin credentials
@@ -226,13 +236,36 @@ export async function updateElectionStatus(
         try {
           const candidatesSnap = await getDocs(collection(db, 'elections', electionId, 'candidates'));
           const ballotsSnap = await getDocs(collection(db, 'ballots'));
-          const totalEligible = 70;
+          const totalEligible = APPROVED_VOTERS.length;
           const totalCast = ballotsSnap.size;
+
+          // Calculate authoritative tally from sealed ballots (SEC-02 Remediation)
+          const ballotCounts: Record<string, number> = {};
+          ballotsSnap.forEach((bDoc) => {
+            const cid = bDoc.data()?.candidateId;
+            if (cid) {
+              ballotCounts[cid] = (ballotCounts[cid] || 0) + 1;
+            }
+          });
 
           const candidateList: any[] = [];
           candidatesSnap.forEach((docS) => {
             const d = docS.data();
-            const count = d.voteCount || 0;
+            const initialMatch = INITIAL_CANDIDATES.find(
+              (ic) =>
+                ic.id === docS.id ||
+                ic.slug === d.slug ||
+                ic.house?.toLowerCase() === d.house?.toLowerCase() ||
+                ic.name?.toLowerCase() === d.name?.toLowerCase()
+            );
+            const resolvedImage = resolveCandidateArtwork({
+              id: docS.id,
+              name: d.name,
+              codename: d.codename,
+              house: d.house,
+              image: d.image || initialMatch?.image,
+            });
+            const count = ballotCounts[docS.id] !== undefined ? ballotCounts[docS.id] : (d.voteCount || 0);
             candidateList.push({
               id: docS.id,
               name: d.name || docS.id,
@@ -242,6 +275,9 @@ export async function updateElectionStatus(
               color: d.color || '#F59E0B',
               colorLight: d.colorLight || '#FEF3C7',
               icon: d.icon || '⚡',
+              image: resolvedImage,
+              imageUrl: resolvedImage,
+              imageAlt: d.imageAlt || initialMatch?.imageAlt || '',
               voteCount: count,
               percentage: totalCast > 0 ? Number(((count / totalCast) * 100).toFixed(1)) : 0,
               rank: 1,
@@ -398,10 +434,19 @@ export async function getAdminElectionStats(
       const candidateCounts: Record<string, { id: string; name: string; codename: string; voteCount: number }> = {};
       let sumCandidateVotes = 0;
 
+      // Authoritative vote counting from sealed immutable ballots (SEC-02 / SEC-03)
+      const ballotCounts: Record<string, number> = {};
+      ballotsSnap.forEach((bDoc) => {
+        const cId = bDoc.data()?.candidateId;
+        if (cId) {
+          ballotCounts[cId] = (ballotCounts[cId] || 0) + 1;
+        }
+      });
+
       if (!candidatesSnap.empty) {
         candidatesSnap.forEach((docSnap) => {
           const d = docSnap.data();
-          const count = typeof d.voteCount === 'number' ? d.voteCount : 0;
+          const count = ballotCounts[docSnap.id] || 0;
           sumCandidateVotes += count;
           candidateCounts[docSnap.id] = {
             id: docSnap.id,
@@ -412,11 +457,13 @@ export async function getAdminElectionStats(
         });
       } else {
         INITIAL_CANDIDATES.forEach((c) => {
+          const count = ballotCounts[c.id] || 0;
+          sumCandidateVotes += count;
           candidateCounts[c.id] = {
             id: c.id,
             name: c.name,
             codename: c.codename,
-            voteCount: 0,
+            voteCount: count,
           };
         });
       }
@@ -512,9 +559,9 @@ export async function getAdminVoteRecords(
       });
 
       const candidateMap: Record<string, { name: string; codename: string }> = {
-        zeus: { name: 'Anshul Raj', codename: 'Zeus' },
-        athena: { name: 'Paridhi Gupta', codename: 'Athena' },
-        poseidon: { name: 'Granth Jigneshbhai Mangukiya', codename: 'Poseidon' },
+        athena: { name: 'Paridhi Gupta', codename: 'ISiS' },
+        zeus: { name: 'Anshul Raj', codename: 'ANUBIS' },
+        poseidon: { name: 'Aryan Yadav', codename: 'HORUS' },
       };
 
       const records: AdminVoteRecord[] = [];
@@ -625,6 +672,11 @@ export async function getAdminParticipation(
 export async function exportParticipationCsv(
   profile?: AuthUserProfile
 ): Promise<CsvExportResult> {
+  if (isFrontendCompromised()) {
+    triggerFrontendRecovery();
+    throw new Error('Administrative session verification failed. Reloading portal...');
+  }
+
   assertAdminRole(profile);
 
   const participation = await getAdminParticipation(profile);
@@ -718,4 +770,149 @@ export async function getAdminAuditLogs(
 
   return [...inMemoryAuditLogs];
 }
+
+/**
+ * Executes an authoritative reset of all election votes.
+ * Restricted strictly to authorized super-administrators:
+ * 1. Calls the backend /api/admin/reset-votes with Firebase ID token
+ * 2. If running locally or direct Firestore fallback is needed, executes atomic batch delete
+ * 3. Resets all in-memory voting state
+ * 4. Refreshes and logs RESET_VOTES audit event
+ */
+export async function resetAllVotes(
+  electionId: string = INITIAL_ELECTION_ID,
+  profile?: AuthUserProfile
+): Promise<{ success: boolean; message: string; details?: any }> {
+  if (isFrontendCompromised()) {
+    triggerFrontendRecovery();
+    throw new Error('Administrative session verification failed. Reloading portal...');
+  }
+
+  assertAdminRole(profile);
+
+  // Obtain current authenticated user's ID token
+  let idToken = '';
+  if (auth?.currentUser) {
+    try {
+      idToken = await auth.currentUser.getIdToken(true);
+    } catch (tokenErr) {
+      logger.warn({ message: 'Failed to retrieve refreshed ID token', context: 'AdminService', error: tokenErr });
+    }
+  }
+
+  // 1. Dispatch to authoritative server-side endpoint
+  let backendError: Error | null = null;
+  try {
+    const res = await fetch('/api/admin/reset-votes', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+      },
+      body: JSON.stringify({ electionId }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      resetInMemoryVotingState();
+      inMemoryAuditLogs.unshift({
+        id: `audit-reset-${Date.now()}`,
+        action: 'RESET_VOTES',
+        actorUid: profile?.uid || 'admin',
+        actorEmail: profile?.email || DESIGNATED_ADMIN_EMAIL,
+        electionId,
+        metadata: { resetBy: profile?.email, timestamp: new Date().toISOString() },
+        createdAt: new Date().toISOString(),
+      });
+      return { success: true, message: data.message || 'All votes have been reset successfully.', details: data.details };
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      backendError = new Error(errData.error || `Server returned ${res.status}: ${res.statusText}`);
+    }
+  } catch (err: unknown) {
+    backendError = err instanceof Error ? err : new Error(String(err));
+  }
+
+  // 2. Direct Firestore Client Fallback if server endpoint could not complete (e.g. offline/isolated emulator)
+  if (db && profile) {
+    try {
+      // Clear ballots collection
+      const ballotsSnap = await getDocs(collection(db, 'ballots'));
+      const batch1 = writeBatch(db);
+      ballotsSnap.forEach((d) => batch1.delete(d.ref));
+      if (!ballotsSnap.empty) await batch1.commit();
+
+      // Clear voteLocks collection
+      const locksSnap = await getDocs(collection(db, 'voteLocks'));
+      const batch2 = writeBatch(db);
+      locksSnap.forEach((d) => batch2.delete(d.ref));
+      if (!locksSnap.empty) await batch2.commit();
+
+      // Reset members hasVoted flags
+      const membersSnap = await getDocs(collection(db, 'members'));
+      const batch3 = writeBatch(db);
+      let membersCount = 0;
+      membersSnap.forEach((d) => {
+        const data = d.data();
+        if (data.hasVoted || data.receiptId || data.votedAt) {
+          batch3.update(d.ref, {
+            hasVoted: false,
+            receiptId: null,
+            votedAt: null,
+            updatedAt: serverTimestamp(),
+          });
+          membersCount++;
+        }
+      });
+      if (membersCount > 0) await batch3.commit();
+
+      // Reset candidates vote counts
+      const candidatesSnap = await getDocs(collection(db, `elections/${electionId}/candidates`));
+      const batch4 = writeBatch(db);
+      candidatesSnap.forEach((d) => {
+        batch4.update(d.ref, {
+          voteCount: 0,
+          updatedAt: serverTimestamp(),
+        });
+      });
+      if (!candidatesSnap.empty) await batch4.commit();
+
+      // Remove results summary if present
+      try {
+        await deleteDoc(doc(db, `elections/${electionId}/results/summary`));
+      } catch (_) {}
+
+      // Add audit log entry in Firestore
+      await addDoc(collection(db, 'auditLogs'), {
+        action: 'RESET_VOTES',
+        actorUid: profile.uid,
+        actorEmail: profile.email,
+        electionId,
+        metadata: { resetBy: profile.email, timestamp: new Date().toISOString() },
+        createdAt: serverTimestamp(),
+      });
+
+      resetInMemoryVotingState();
+      return { success: true, message: 'All votes have been reset successfully.' };
+    } catch (firestoreErr: unknown) {
+      const fMsg = firestoreErr instanceof Error ? firestoreErr.message : String(firestoreErr);
+      throw new Error(`Failed to reset votes: ${backendError ? backendError.message : fMsg}`);
+    }
+  }
+
+  // 3. In-memory simulation fallback (if db is null, purely local)
+  resetInMemoryVotingState();
+  inMemoryAuditLogs.unshift({
+    id: `audit-reset-${Date.now()}`,
+    action: 'RESET_VOTES',
+    actorUid: profile?.uid || 'admin',
+    actorEmail: profile?.email || DESIGNATED_ADMIN_EMAIL,
+    electionId,
+    metadata: { resetBy: profile?.email, timestamp: new Date().toISOString() },
+    createdAt: new Date().toISOString(),
+  });
+
+  return { success: true, message: 'All votes have been reset successfully.' };
+}
+
 
