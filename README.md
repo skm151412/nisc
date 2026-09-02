@@ -1,150 +1,176 @@
-# NISC Secure Election System
+# NISC Election Portal
 
-> **STATUS:** PHASE 1 COMPLETE  
-> *Authentication and voting functionality are intentionally not implemented yet.*
-
----
-
-## 1. Project Overview
-
-The **NISC Secure Election System** is a high-assurance, tamper-resistant digital voting application built for the **National Institute Student Council (NISC)**. 
-
-### Key System Specifications (Full Scope)
-* **Eligible Voters:** Exactly 70 allowlisted student members.
-* **Voting Quota:** Exactly 1 vote per approved voter (immutable, non-resettable).
-* **Candidates:** 3 official candidate seats.
-* **Single Administrator:** `skm151412@gmail.com`
-* **Election Lifecycle:** `UPCOMING` → `OPEN` → `CLOSED` → `RESULTS` (strictly linear, manual admin control).
-* **Auditability:** Designated admin can always audit who voted for whom and export participation metrics as CSV.
+The **NISC Election Portal** is a secure, institutional digital voting application designed for the **National Institute Student Council (NISC)** elections. The platform provides a streamlined and trustworthy election experience, enabling eligible student voters to view candidate profiles, cast verified ballots, and view certified election outcomes.
 
 ---
 
-## 2. Technology Stack
+## Features
 
-* **Frontend:** React 19, TypeScript, Vite, Tailwind CSS, Lucide Icons
-* **Backend & Database:** Firebase Authentication (Google OAuth), Cloud Firestore, Firebase Cloud Functions (Node 20 runtime)
-* **Security & Infrastructure:** Firebase App Check, Firebase Security Rules (`firestore.rules`), Firebase Emulator Suite, Firebase Hosting
-
----
-
-## 3. Security Architecture
-
-The application is built on a **Zero-Trust Client** model:
-1. **Frontend Untrusted:** The client browser is never treated as an authority. Frontend states (`isAdmin`, `hasVoted`, `role`) govern presentation only.
-2. **Deny-by-Default Database Rules:** All Firestore collections (`members`, `admins`, `elections`, `candidates`, `ballots`, `auditLogs`) are protected by strict security rules.
-3. **No Insecure Client Claims:** Roles are resolved against authoritative Firestore collections and server-side Cloud Functions.
-4. **Data Isolation:** Ballots are write-once and protected against any client-side update or deletion.
-
----
-
-## 4. Project Structure
-
-```text
-├── .env.example               # Template of required environment variables
-├── .firebaserc                # Firebase CLI project binding
-├── .gitignore                 # Secrets, logs, and build artifacts exclusion
-├── firebase.json              # Firebase Emulators, Firestore, Functions & Hosting config
-├── firebase-blueprint.json    # Formal data model and collection schema definition
-├── firestore.rules            # Deny-by-default security rules
-├── firestore.indexes.json     # Firestore composite index declarations
-├── functions/                 # Trusted server-side Cloud Functions
-│   ├── package.json           # Functions dependencies (firebase-admin, firebase-functions)
-│   ├── tsconfig.json          # Functions TypeScript compilation config
-│   └── src/
-│       └── index.ts           # Cloud Functions entry point (healthCheck & server operations)
-├── metadata.json              # Platform metadata & permissions
-├── package.json               # Frontend dependencies & emulator scripts
-└── src/
-    ├── App.tsx                # Application root with layout & page routing
-    ├── main.tsx               # Entry mount
-    ├── index.css              # Tailwind CSS styles
-    ├── config/
-    │   ├── constants.ts       # NISC domain constants (admin email, counts, collections)
-    │   └── firebase.ts        # Environment variable loader
-    ├── types/
-    │   ├── election.ts        # ElectionStatus enum, Election & Candidate interfaces
-    │   ├── member.ts          # Member, Admin, AdminRole types
-    │   ├── ballot.ts          # Ballot type (write-once)
-    │   ├── audit.ts           # AuditLog, AuditEventType types
-    │   └── index.ts           # Barrel export & FirebaseConfigStatus
-    ├── services/
-    │   ├── firebase.ts        # Central Firebase App/Auth/Firestore/Functions init
-    │   ├── appCheck.ts        # Firebase App Check configuration
-    │   └── firestoreErrors.ts # Secure error handling & sanitization
-    ├── hooks/
-    │   └── useFirebase.ts     # React hook for Firebase readiness & auth state
-    ├── utils/
-    │   ├── formatters.ts      # Lifecycle status labels & timestamp formatting
-    │   └── logger.ts          # Safe logger (redacting sensitive keys & tokens)
-    ├── components/
-    │   ├── common/
-    │   │   ├── Badge.tsx      # Lifecycle status badges
-    │   │   ├── Card.tsx       # Standard card container
-    │   │   ├── Header.tsx     # Navigation header with system health indicator
-    │   │   ├── Footer.tsx     # Institutional footer
-    │   │   ├── LoadingSpinner.tsx
-    │   │   └── ErrorMessage.tsx
-    │   └── layout/
-    │       └── AppLayout.tsx  # Responsive application layout shell
-    └── pages/
-        ├── HomePage.tsx       # Architecture & foundation dashboard
-        ├── LoginPage.tsx      # Authentication gateway specification placeholder
-        ├── ElectionPage.tsx   # Election lifecycle & candidate schema placeholder
-        └── AdminPage.tsx      # Governance & auditability specification placeholder
-```
+- **Google Authentication**: Seamless sign-in using Google accounts to authenticate voter identity.
+- **Registered-Voter Allowlist**: Access control enforcing that only authorized student members on the official electoral roll can participate in voting.
+- **Candidate Profiles**: Comprehensive candidate information including names, codenames, position platforms, and detailed vision statements.
+- **Secure Voting**: Protected voting workflow with clear confirmation dialogs to prevent accidental submissions.
+- **One-Vote-Per-Voter Protection**: Authoritative validation guaranteeing exactly one ballot per eligible voter with non-resettable vote tracking.
+- **Election States**: Strict four-state election lifecycle:
+  - `Upcoming`: Pre-election state where candidate profiles are browsable, but voting has not started.
+  - `Live`: Active voting is open for all eligible voters.
+  - `Paused`: Voting is temporarily suspended by administrators.
+  - `Finished`: Election has permanently concluded and official results are published.
+- **Admin Election Controls**: Real-time management interface for election administrators to control status transitions and view participation metrics.
+- **Election Results**: Publicly accessible certified results and candidate tally metrics once the election is concluded.
+- **Firebase Firestore Backend**: Scalable, real-time database managing election metadata, allowlist verification, and ballot tracking.
+- **Firebase Hosting Deployment**: Fast, secure global hosting with static asset delivery and SPA routing.
 
 ---
 
-## 5. Environment Variables
+## Admin Controls
 
-Configure the following environment variables in `.env` (refer to `.env.example`):
+Authorized administrators manage the election lifecycle through dedicated administrative controls:
+
+- **Start Election** (`Upcoming` → `Live`): Opens the election and enables voting for all verified voters on the allowlist.
+- **Stop/Pause Election** (`Live` → `Paused`): Temporarily suspends active voting (e.g., during scheduled maintenance or quorum adjustments). Ballot submissions are temporarily disabled.
+- **Resume Election** (`Paused` → `Live`): Resumes the voting period, re-enabling ballot submissions for voters who have not yet cast their vote.
+- **Finish Election** (`Live` / `Paused` → `Finished`): Permanently concludes the election, locks all voting mechanisms, and publishes final certified results.
+- **Finished Elections Cannot Be Restarted**: Once an election is marked as Finished, the state transition is permanent and irreversible to protect electoral integrity and finality.
+
+---
+
+## Technology Stack
+
+- **Frontend Framework**: React 19, TypeScript
+- **Build Tool**: Vite 6
+- **Styling**: Tailwind CSS v4
+- **UI Components & Icons**: Lucide React, Motion
+- **Authentication**: Firebase Authentication (Google OAuth provider)
+- **Database**: Cloud Firestore
+- **Serverless Backend**: Firebase Cloud Functions (Node.js runtime)
+- **Deployment & Emulation**: Firebase Hosting, Firebase Local Emulator Suite
+
+---
+
+## Firebase Configuration
+
+The web client connects to Firebase services using environment variables loaded at build and development time by Vite.
+
+Create a `.env` file in the root directory (based on `.env.example`) and configure the following required environment variables:
 
 ```bash
-# Firebase Client Configuration (nisc-2026)
-VITE_FIREBASE_API_KEY="AIzaSyC9u3O-N7WE7C5gTkh__pXyrLNt84tqtF0"
-VITE_FIREBASE_AUTH_DOMAIN="nisc-2026.firebaseapp.com"
-VITE_FIREBASE_PROJECT_ID="nisc-2026"
-VITE_FIREBASE_STORAGE_BUCKET="nisc-2026.firebasestorage.app"
-VITE_FIREBASE_MESSAGING_SENDER_ID="252912759752"
-VITE_FIREBASE_APP_ID="1:252912759752:web:f21200eaf84761ce7906fd"
+VITE_FIREBASE_API_KEY=""
+VITE_FIREBASE_AUTH_DOMAIN=""
+VITE_FIREBASE_PROJECT_ID=""
+VITE_FIREBASE_STORAGE_BUCKET=""
+VITE_FIREBASE_MESSAGING_SENDER_ID=""
+VITE_FIREBASE_APP_ID=""
 VITE_FIREBASE_APPCHECK_SITE_KEY=""
 VITE_USE_FIREBASE_EMULATOR="false"
 VITE_FIREBASE_DATABASE_ID="(default)"
 ```
 
+> **Note**: Never commit sensitive credentials or private keys to source control.
+
 ---
 
-## 6. Local Development & Firebase Emulator Suite
+## Local Development
 
-### Running Frontend
+### Prerequisites
+- Node.js (v20+ recommended)
+- npm
+
+### 1. Install Dependencies
+```bash
+npm install
+```
+
+### 2. Start Development Server
 ```bash
 npm run dev
 ```
+The application will be accessible locally at `http://localhost:3000`.
 
-### Running with Firebase Emulators
+### 3. Production Build
+To create an optimized production build:
 ```bash
-# Start local emulators (Auth, Firestore, Functions, Hosting)
-npm run emulators
-
-# Or run only core backend emulators:
-npm run emulators:core
+npm run build
 ```
-
-Default Emulator Ports:
-* **Auth Emulator:** `127.0.0.1:9099`
-* **Firestore Emulator:** `127.0.0.1:8080`
-* **Functions Emulator:** `127.0.0.1:5001`
-* **Hosting Emulator:** `127.0.0.1:5000`
-* **Emulator UI Suite:** `http://127.0.0.1:4000`
+Compiled static assets are output to the `dist/` directory.
 
 ---
 
-## 7. Current Phase Status
+## Firebase Deployment
+
+Deploy the project using the Firebase CLI:
+
+### 1. Authenticate with Firebase
+```bash
+firebase login
+```
+
+### 2. Select the Firebase Project
+```bash
+firebase use nisc-2026
+```
+
+### 3. Build the Application
+```bash
+npm run build
+```
+
+### 4. Deploy All Resources
+```bash
+firebase deploy
+```
+
+The `firebase.json` configuration will deploy:
+- **Firestore Rules & Indexes**: Security rules (`firestore.rules`) and query indexes (`firestore.indexes.json`).
+- **Cloud Functions**: Backend functions located in the `functions/` directory.
+- **Firebase Hosting**: The compiled single-page application from the `dist/` directory.
+
+---
+
+## Production URL
+
+Production URL:
+[ADD AFTER DEPLOYMENT]
+
+---
+
+## Project Structure
 
 ```text
-=========================================================
-PHASE 1 COMPLETE
-Authentication and voting functionality are intentionally 
-not implemented yet.
-=========================================================
+├── functions/                 # Backend Cloud Functions source and configuration
+│   ├── src/index.ts           # Cloud Functions entry point
+│   └── package.json           # Cloud Functions dependencies
+├── public/                    # Static public assets
+├── src/                       # Frontend application source
+│   ├── components/            # Reusable UI, layout, voter, admin, and results components
+│   │   ├── admin/             # Admin controls, status transition modal, and audit views
+│   │   ├── common/            # Shared UI components (badges, cards, loaders, navigation)
+│   │   ├── layout/            # Application layout shells and headers
+│   │   ├── results/           # Results cards, charts, and pending state views
+│   │   └── voter/             # Voter portal cards, ballots, and confirmation modals
+│   ├── config/                # Election configuration, constants, and allowlist data
+│   ├── hooks/                 # Custom React hooks for Firebase and auth state
+│   ├── pages/                 # Main routed pages (Home, Login, Voter Portal, Admin, Results)
+│   ├── services/              # Firebase, election, admin, and voting service layers
+│   ├── types/                 # Shared TypeScript type and interface definitions
+│   ├── utils/                 # Formatting utilities, logger, and security helpers
+│   ├── App.tsx                # Top-level application component and route management
+│   ├── index.css              # Global styles and Tailwind CSS imports
+│   └── main.tsx               # Client entry point mounting React root
+├── .env.example               # Template for required environment variables
+├── firebase.json              # Firebase CLI deployment and emulator configuration
+├── firestore.rules            # Firestore security and access control rules
+├── firestore.indexes.json     # Firestore composite index definitions
+├── package.json               # Project manifest, scripts, and dependencies
+├── tsconfig.json              # TypeScript compiler configuration
+└── vite.config.ts             # Vite build and plugin configuration
 ```
+
+---
+
+## Security Notes
+
+- **Role & Authorization Checks**: User permissions and voter eligibility are strictly validated server-side against authorized member records and designated administrative profiles.
+- **Ballot Immutability**: Ballots are write-once records; once cast, a voter's ballot cannot be modified or re-cast.
+- **Concealed Results**: Election vote totals remain concealed during the active voting phases to prevent early result leakage and maintain voting fairness.
+- **Secure Communication**: All API communication and database operations utilize HTTPS and encrypted connections.

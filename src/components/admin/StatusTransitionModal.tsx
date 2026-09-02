@@ -22,51 +22,71 @@ export const StatusTransitionModal: React.FC<StatusTransitionModalProps> = ({
   if (!isOpen || !targetStatus) return null;
 
   const getModalDetails = () => {
-    switch (targetStatus) {
-      case ElectionStatus.OPEN:
-        return {
-          title: 'Start Election?',
-          badge: 'UPCOMING → OPEN',
-          badgeColor: 'bg-emerald-500/10 text-emerald-700 border-emerald-300',
-          description:
-            'This will open voting for all 70 verified institutional voters. Eligible voters will be permitted to cast a single atomic ballot.',
-          warning: 'The election cannot be reset from this dashboard.',
-          confirmText: 'Start Election',
-          confirmBtnClass: 'bg-emerald-600 hover:bg-emerald-700 text-white',
-        };
-      case ElectionStatus.CLOSED:
-        return {
-          title: 'Close Election?',
-          badge: 'OPEN → CLOSED',
-          badgeColor: 'bg-rose-500/10 text-rose-700 border-rose-300',
-          description:
-            'After closing, voters will no longer be able to cast votes. All subsequent ballot submission attempts will be rejected by the backend.',
-          warning: 'This action cannot be reversed from the dashboard.',
-          confirmText: 'Close Election',
-          confirmBtnClass: 'bg-rose-600 hover:bg-rose-700 text-white',
-        };
-      case ElectionStatus.RESULTS:
-        return {
-          title: 'Publish Results?',
-          badge: 'CLOSED → RESULTS',
-          badgeColor: 'bg-amber-500/10 text-amber-700 border-amber-300',
-          description:
-            'The final election results and candidate vote tallies will become visible to all voters and participants.',
-          warning: 'Once published, results are permanently public and cannot be retracted.',
-          confirmText: 'Publish Results',
-          confirmBtnClass: 'bg-amber-600 hover:bg-amber-700 text-white',
-        };
-      default:
-        return {
-          title: 'Confirm State Transition',
-          badge: `${currentStatus} → ${targetStatus}`,
-          badgeColor: 'bg-slate-100 text-slate-700 border-slate-300',
-          description: 'Are you sure you want to transition the election status?',
-          warning: 'This action is irreversible.',
-          confirmText: 'Confirm',
-          confirmBtnClass: 'bg-blue-600 hover:bg-blue-700 text-white',
-        };
+    // UPCOMING -> LIVE
+    if (targetStatus === ElectionStatus.LIVE && currentStatus === ElectionStatus.UPCOMING) {
+      return {
+        title: 'Start Election?',
+        badge: 'UPCOMING → LIVE',
+        badgeColor: 'bg-emerald-500/10 text-emerald-700 border-emerald-300',
+        description:
+          'This will open voting for all 70 verified institutional voters. Eligible voters will be permitted to cast a single atomic ballot.',
+        warning: 'The election cannot be reset from this dashboard.',
+        confirmText: 'Start Election',
+        confirmBtnClass: 'bg-emerald-600 hover:bg-emerald-700 text-white',
+      };
     }
+
+    // PAUSED -> LIVE
+    if (targetStatus === ElectionStatus.LIVE && (currentStatus === ElectionStatus.PAUSED || currentStatus === ElectionStatus.CLOSED)) {
+      return {
+        title: 'Resume Election?',
+        badge: 'PAUSED → LIVE',
+        badgeColor: 'bg-emerald-500/10 text-emerald-700 border-emerald-300',
+        description:
+          'This will resume active voting for all eligible voters who have not yet cast their ballot.',
+        warning: 'Voters will immediately be able to submit ballots again.',
+        confirmText: 'Resume Election',
+        confirmBtnClass: 'bg-emerald-600 hover:bg-emerald-700 text-white',
+      };
+    }
+
+    // LIVE -> PAUSED
+    if (targetStatus === ElectionStatus.PAUSED && (currentStatus === ElectionStatus.LIVE || currentStatus === ElectionStatus.OPEN)) {
+      return {
+        title: 'Stop / Pause Election?',
+        badge: 'LIVE → PAUSED',
+        badgeColor: 'bg-amber-500/10 text-amber-800 border-amber-300',
+        description:
+          'Voting will be temporarily paused. Ballot submissions will be rejected until an administrator resumes the election.',
+        warning: 'The election can be resumed or finished later by an administrator.',
+        confirmText: 'Stop / Pause Election',
+        confirmBtnClass: 'bg-amber-600 hover:bg-amber-700 text-white',
+      };
+    }
+
+    // LIVE or PAUSED -> FINISHED
+    if (targetStatus === ElectionStatus.FINISHED || targetStatus === ElectionStatus.RESULTS) {
+      return {
+        title: 'Finish Election & Publish Results?',
+        badge: `${currentStatus} → FINISHED`,
+        badgeColor: 'bg-rose-500/10 text-rose-700 border-rose-300',
+        description:
+          'This permanently ends the election and generates the authoritative results summary. Candidate vote totals and winners will become visible to all participants.',
+        warning: 'This action is PERMANENT. Once finished, no further voting or state transitions are permitted.',
+        confirmText: 'Finish Election',
+        confirmBtnClass: 'bg-rose-600 hover:bg-rose-700 text-white',
+      };
+    }
+
+    return {
+      title: 'Confirm State Transition',
+      badge: `${currentStatus} → ${targetStatus}`,
+      badgeColor: 'bg-slate-100 text-slate-700 border-slate-300',
+      description: 'Are you sure you want to transition the election status?',
+      warning: 'This action will be recorded in the audit log.',
+      confirmText: 'Confirm Transition',
+      confirmBtnClass: 'bg-blue-600 hover:bg-blue-700 text-white',
+    };
   };
 
   const details = getModalDetails();
@@ -108,7 +128,7 @@ export const StatusTransitionModal: React.FC<StatusTransitionModalProps> = ({
             id="modal-cancel-btn"
             onClick={onCancel}
             disabled={isProcessing}
-            className="px-4 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold text-xs transition-colors disabled:opacity-50"
+            className="px-4 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold text-xs transition-colors disabled:opacity-50 cursor-pointer"
           >
             Cancel
           </button>
@@ -118,7 +138,7 @@ export const StatusTransitionModal: React.FC<StatusTransitionModalProps> = ({
             id="modal-confirm-btn"
             onClick={onConfirm}
             disabled={isProcessing}
-            className={`px-5 py-2.5 rounded-xl font-semibold text-xs shadow-xs transition-colors flex items-center gap-2 ${details.confirmBtnClass} disabled:opacity-50`}
+            className={`px-5 py-2.5 rounded-xl font-semibold text-xs shadow-xs transition-colors flex items-center gap-2 ${details.confirmBtnClass} disabled:opacity-50 cursor-pointer`}
           >
             {isProcessing ? (
               <>

@@ -31,7 +31,7 @@ import {
 } from '../services/adminService';
 import { subscribeToElection } from '../services/electionService';
 import { AuditLog } from '../types/audit';
-import { DESIGNATED_ADMIN_EMAIL } from '../config/voterAllowlist';
+import { DESIGNATED_ADMIN_EMAIL, isAdminEmail } from '../config/voterAllowlist';
 import { INITIAL_ELECTION_ID } from '../config/electionData';
 import { ElectionStatusControl } from '../components/admin/ElectionStatusControl';
 import { CandidateResultsCard } from '../components/admin/CandidateResultsCard';
@@ -55,7 +55,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   // Authorization boundary verification
   const isAuthorizedAdmin =
     profile.role === 'ADMIN' &&
-    profile.email.toLowerCase() === DESIGNATED_ADMIN_EMAIL.toLowerCase();
+    isAdminEmail(profile.email);
 
   const [stats, setStats] = useState<AdminElectionStats | null>(null);
   const [voteRecords, setVoteRecords] = useState<AdminVoteRecord[]>([]);
@@ -209,7 +209,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
               </span>
             </div>
             <p className="text-xs sm:text-sm text-slate-400 mt-1">
-              Administrator: <span className="font-mono text-amber-200 font-semibold">{DESIGNATED_ADMIN_EMAIL}</span>
+              Administrator: <span className="font-mono text-amber-200 font-semibold">{profile.email}</span>
             </p>
           </div>
         </div>

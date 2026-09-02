@@ -97,9 +97,13 @@ export const APPROVED_VOTER_EMAILS: string[] = Array.from(
 export const APPROVED_VOTER_SET: Set<string> = new Set(APPROVED_VOTER_EMAILS);
 
 /**
- * The single designated administrator email
+ * Authorized Administrator Emails
  */
 export const DESIGNATED_ADMIN_EMAIL: string = 'skm151412@gmail.com';
+export const DESIGNATED_ADMIN_EMAILS: string[] = [
+  'skm151412@gmail.com',
+  'mohiuddinahmad9abcs@gmail.com',
+];
 
 /**
  * Validates if an email is in the exact voter allowlist
@@ -110,11 +114,12 @@ export function isVoterAllowlisted(email?: string | null): boolean {
 }
 
 /**
- * Validates if an email is the single designated administrator
+ * Validates if an email is an authorized administrator
  */
 export function isAdminEmail(email?: string | null): boolean {
   if (!email) return false;
-  return normalizeEmail(email) === normalizeEmail(DESIGNATED_ADMIN_EMAIL);
+  const normalized = normalizeEmail(email);
+  return DESIGNATED_ADMIN_EMAILS.some((admin) => normalizeEmail(admin) === normalized);
 }
 
 /**

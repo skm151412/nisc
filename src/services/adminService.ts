@@ -34,7 +34,7 @@ import {
   Candidate,
   AuditLog,
 } from '../types';
-import { DESIGNATED_ADMIN_EMAIL, APPROVED_VOTERS } from '../config/voterAllowlist';
+import { DESIGNATED_ADMIN_EMAIL, APPROVED_VOTERS, isAdminEmail } from '../config/voterAllowlist';
 import { INITIAL_CANDIDATES, INITIAL_ELECTION_ID } from '../config/electionData';
 import { logger } from '../utils/logger';
 
@@ -116,7 +116,7 @@ function assertAdminRole(profile?: AuthUserProfile) {
   if (
     !profile ||
     profile.role !== 'ADMIN' ||
-    profile.email.toLowerCase() !== DESIGNATED_ADMIN_EMAIL.toLowerCase()
+    !isAdminEmail(profile.email)
   ) {
     throw new Error('PERMISSION_DENIED: Administrator privilege required.');
   }
@@ -128,6 +128,8 @@ function assertAdminRole(profile?: AuthUserProfile) {
 let inMemoryElectionStatus: ElectionStatus = ElectionStatus.UPCOMING;
 let inMemoryOpenedAt: string | null = null;
 let inMemoryClosedAt: string | null = null;
+let inMemoryPausedAt: string | null = null;
+let inMemoryResumedAt: string | null = null;
 let inMemoryResultsPublishedAt: string | null = null;
 
 const inMemoryAuditLogs: AuditLog[] = [
@@ -145,14 +147,42 @@ export function resetInMemoryAdminState() {
   inMemoryElectionStatus = ElectionStatus.UPCOMING;
   inMemoryOpenedAt = null;
   inMemoryClosedAt = null;
+  inMemoryPausedAt = null;
+  inMemoryResumedAt = null;
   inMemoryResultsPublishedAt = null;
   inMemoryAuditLogs.length = 1;
 }
 
 /**
- * Updates election status to OPEN, CLOSED, or RESULTS.
- * Rejects invalid transitions (e.g. UPCOMING -> CLOSED, RESULTS -> OPEN, etc.).
- * NO RESET IS PERMITTED.
+ * Validates whether a state transition is permitted in the 4-state model:
+ * UPCOMING -> LIVE
+ * LIVE -> PAUSED
+ * PAUSED -> LIVE
+ * LIVE -> FINISHED
+ * PAUSED -> FINISHED
+ */
+export function isValidElectionTransition(current: ElectionStatus | string, target: ElectionStatus | string): boolean {
+  const normCurrent = current === 'OPEN' ? 'LIVE' : current === 'CLOSED' ? 'PAUSED' : current === 'RESULTS' ? 'FINISHED' : current;
+  const normTarget = target === 'OPEN' ? 'LIVE' : target === 'CLOSED' ? 'PAUSED' : target === 'RESULTS' ? 'FINISHED' : target;
+
+  return (
+    (normCurrent === ElectionStatus.UPCOMING && normTarget === ElectionStatus.LIVE) ||
+    (normCurrent === ElectionStatus.LIVE && normTarget === ElectionStatus.PAUSED) ||
+    (normCurrent === ElectionStatus.PAUSED && normTarget === ElectionStatus.LIVE) ||
+    (normCurrent === ElectionStatus.LIVE && normTarget === ElectionStatus.FINISHED) ||
+    (normCurrent === ElectionStatus.PAUSED && normTarget === ElectionStatus.FINISHED)
+  );
+}
+
+/**
+ * Updates election status to LIVE, PAUSED, or FINISHED.
+ * Enforces allowed transitions:
+ *   UPCOMING -> LIVE
+ *   LIVE -> PAUSED
+ *   PAUSED -> LIVE
+ *   LIVE -> FINISHED
+ *   PAUSED -> FINISHED
+ * Rejects all other transitions. NO RESET IS PERMITTED.
  */
 export async function updateElectionStatus(
   targetStatus: ElectionStatus,
@@ -196,15 +226,10 @@ export async function updateElectionStatus(
       const snap = await getDoc(electionRef);
       const currentStatus = (snap.exists() ? snap.data()?.status : inMemoryElectionStatus) as ElectionStatus;
 
-      // Validate allowed transitions
-      const isValid =
-        (currentStatus === ElectionStatus.UPCOMING && targetStatus === ElectionStatus.OPEN) ||
-        (currentStatus === ElectionStatus.OPEN && targetStatus === ElectionStatus.CLOSED) ||
-        (currentStatus === ElectionStatus.CLOSED && targetStatus === ElectionStatus.RESULTS);
-
-      if (!isValid) {
+      // Validate allowed transitions in 4-state engine
+      if (!isValidElectionTransition(currentStatus, targetStatus)) {
         throw new Error(
-          `Invalid state transition from ${currentStatus} to ${targetStatus}. Allowed: UPCOMING -> OPEN, OPEN -> CLOSED, CLOSED -> RESULTS.`
+          `Invalid state transition from ${currentStatus} to ${targetStatus}. Allowed: UPCOMING -> LIVE, LIVE -> PAUSED, PAUSED -> LIVE, LIVE -> FINISHED, PAUSED -> FINISHED.`
         );
       }
 
@@ -214,15 +239,20 @@ export async function updateElectionStatus(
       };
 
       let action = 'ADMIN_ACTION';
-      if (targetStatus === ElectionStatus.OPEN) {
-        updatePayload.openedAt = serverTimestamp();
-        action = 'ELECTION_OPENED';
-      } else if (targetStatus === ElectionStatus.CLOSED) {
-        updatePayload.closedAt = serverTimestamp();
-        action = 'ELECTION_CLOSED';
-      } else if (targetStatus === ElectionStatus.RESULTS) {
+      if (targetStatus === ElectionStatus.LIVE) {
+        if (!snap.data()?.openedAt) {
+          updatePayload.openedAt = serverTimestamp();
+        }
+        updatePayload.resumedAt = serverTimestamp();
+        action = currentStatus === ElectionStatus.PAUSED ? 'ELECTION_RESUMED' : 'ELECTION_STARTED';
+      } else if (targetStatus === ElectionStatus.PAUSED) {
+        updatePayload.pausedAt = serverTimestamp();
+        action = 'ELECTION_PAUSED';
+      } else if (targetStatus === ElectionStatus.FINISHED) {
         updatePayload.resultsPublishedAt = serverTimestamp();
-        action = 'RESULTS_PUBLISHED';
+        updatePayload.closedAt = serverTimestamp();
+        updatePayload.finishedAt = serverTimestamp();
+        action = 'ELECTION_FINISHED';
 
         // Write aggregate snapshot
         try {
@@ -291,7 +321,7 @@ export async function updateElectionStatus(
           await setDoc(summaryRef, {
             electionId,
             title: snap.data()?.title || 'NISC Executive Council General Election 2026',
-            status: ElectionStatus.RESULTS,
+            status: ElectionStatus.FINISHED,
             totalEligibleVoters: totalEligible,
             totalVotesCast: totalCast,
             didNotVote: Math.max(0, totalEligible - totalCast),
@@ -331,14 +361,9 @@ export async function updateElectionStatus(
 
   // 3. Fallback in-memory transition engine
   const currentStatus = inMemoryElectionStatus;
-  const isValid =
-    (currentStatus === ElectionStatus.UPCOMING && targetStatus === ElectionStatus.OPEN) ||
-    (currentStatus === ElectionStatus.OPEN && targetStatus === ElectionStatus.CLOSED) ||
-    (currentStatus === ElectionStatus.CLOSED && targetStatus === ElectionStatus.RESULTS);
-
-  if (!isValid) {
+  if (!isValidElectionTransition(currentStatus, targetStatus)) {
     throw new Error(
-      `Invalid status transition from ${currentStatus} to ${targetStatus}. Allowed: UPCOMING -> OPEN, OPEN -> CLOSED, CLOSED -> RESULTS.`
+      `Invalid status transition from ${currentStatus} to ${targetStatus}. Allowed: UPCOMING -> LIVE, LIVE -> PAUSED, PAUSED -> LIVE, LIVE -> FINISHED, PAUSED -> FINISHED.`
     );
   }
 
@@ -346,15 +371,17 @@ export async function updateElectionStatus(
   const nowStr = new Date().toISOString();
 
   let action = 'ADMIN_ACTION';
-  if (targetStatus === ElectionStatus.OPEN) {
-    inMemoryOpenedAt = nowStr;
-    action = 'ELECTION_OPENED';
-  } else if (targetStatus === ElectionStatus.CLOSED) {
-    inMemoryClosedAt = nowStr;
-    action = 'ELECTION_CLOSED';
-  } else if (targetStatus === ElectionStatus.RESULTS) {
+  if (targetStatus === ElectionStatus.LIVE) {
+    if (!inMemoryOpenedAt) inMemoryOpenedAt = nowStr;
+    inMemoryResumedAt = nowStr;
+    action = currentStatus === ElectionStatus.PAUSED ? 'ELECTION_RESUMED' : 'ELECTION_STARTED';
+  } else if (targetStatus === ElectionStatus.PAUSED) {
+    inMemoryPausedAt = nowStr;
+    action = 'ELECTION_PAUSED';
+  } else if (targetStatus === ElectionStatus.FINISHED) {
     inMemoryResultsPublishedAt = nowStr;
-    action = 'RESULTS_PUBLISHED';
+    inMemoryClosedAt = nowStr;
+    action = 'ELECTION_FINISHED';
   }
 
   inMemoryAuditLogs.unshift({

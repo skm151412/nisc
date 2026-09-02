@@ -21,7 +21,11 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 const auth = admin.auth();
 
-const DESIGNATED_ADMIN_EMAIL = 'skm151412@gmail.com';
+const DESIGNATED_ADMIN_EMAILS = [
+  'skm151412@gmail.com',
+  'mohiuddinahmad9abcs@gmail.com',
+];
+const DESIGNATED_ADMIN_EMAIL = DESIGNATED_ADMIN_EMAILS[0];
 
 const RAW_VOTER_EMAILS = [
   '2410080042@klh.edu.in',
@@ -150,19 +154,20 @@ export const onUserCreated = functionsV1.auth.user().onCreate(async (user) => {
     return;
   }
 
-  // 1. Exact Admin Authorization Check
-  if (email === DESIGNATED_ADMIN_EMAIL.toLowerCase()) {
+  // 1. Exact Admin Authorization Check (Both Administrators)
+  const isAdmin = DESIGNATED_ADMIN_EMAILS.some((adm) => adm.toLowerCase() === email);
+  if (isAdmin) {
     try {
       await auth.setCustomUserClaims(uid, { admin: true });
       await db.collection('admins').doc(uid).set(
         {
-          email: DESIGNATED_ADMIN_EMAIL,
+          email,
           active: true,
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true }
       );
-      logger.info(`Custom admin claim and /admins/${uid} document created for ${email}`);
+      logger.info(`Custom admin claim and /admins/${uid} document created for admin: ${email}`);
     } catch (error) {
       logger.error(`Failed to assign admin claim to ${email}:`, error);
     }
@@ -309,7 +314,30 @@ export const submitVote = onCall(async (request: CallableRequest<SubmitVoteData>
         );
       }
       const electionData = electionDoc.data();
-      if (electionData?.status !== 'OPEN') {
+      const currentElectionStatus = String(electionData?.status || '').toUpperCase();
+
+      if (currentElectionStatus === 'PAUSED' || currentElectionStatus === 'CLOSED') {
+        throw new HttpsError(
+          'failed-precondition',
+          'Voting is temporarily paused. Please try again when the election is resumed.'
+        );
+      }
+
+      if (currentElectionStatus === 'UPCOMING') {
+        throw new HttpsError(
+          'failed-precondition',
+          'Voting has not started yet.'
+        );
+      }
+
+      if (currentElectionStatus === 'FINISHED' || currentElectionStatus === 'RESULTS') {
+        throw new HttpsError(
+          'failed-precondition',
+          'Voting is closed for this election.'
+        );
+      }
+
+      if (currentElectionStatus !== 'LIVE' && currentElectionStatus !== 'OPEN') {
         throw new HttpsError(
           'failed-precondition',
           'Voting is not currently open.'
@@ -439,11 +467,11 @@ async function verifyAdminAuthorization(request: CallableRequest<unknown>): Prom
 
   const uid = request.auth.uid;
   const tokenEmail = request.auth.token.email ? request.auth.token.email.trim().toLowerCase() : '';
-  const isDesignatedEmail = tokenEmail === DESIGNATED_ADMIN_EMAIL.toLowerCase();
+  const isDesignatedEmail = DESIGNATED_ADMIN_EMAILS.some((admin) => admin.toLowerCase() === tokenEmail);
   const hasAdminClaim = request.auth.token.admin === true;
 
   if (isDesignatedEmail || hasAdminClaim) {
-    return { uid, email: DESIGNATED_ADMIN_EMAIL };
+    return { uid, email: tokenEmail || DESIGNATED_ADMIN_EMAIL };
   }
 
   // Double check /admins/{uid} collection in Firestore
@@ -477,28 +505,47 @@ function sanitizeCsvField(value: unknown): string {
 
 export interface UpdateElectionStatusData {
   electionId?: string;
-  targetStatus?: 'OPEN' | 'CLOSED' | 'RESULTS';
+  targetStatus?: 'UPCOMING' | 'LIVE' | 'PAUSED' | 'FINISHED' | 'OPEN' | 'CLOSED' | 'RESULTS';
+}
+
+/**
+ * Normalizes state name to the authoritative 4-state model: UPCOMING, LIVE, PAUSED, FINISHED
+ */
+function normalizeElectionStatus(status?: string | null): 'UPCOMING' | 'LIVE' | 'PAUSED' | 'FINISHED' {
+  if (!status) return 'UPCOMING';
+  const upper = String(status).trim().toUpperCase();
+  if (upper === 'LIVE' || upper === 'OPEN') return 'LIVE';
+  if (upper === 'PAUSED' || upper === 'CLOSED') return 'PAUSED';
+  if (upper === 'FINISHED' || upper === 'RESULTS') return 'FINISHED';
+  if (upper === 'UPCOMING') return 'UPCOMING';
+  return 'UPCOMING';
 }
 
 /**
  * Strict state transition engine for election lifecycle.
+ * States: UPCOMING, LIVE, PAUSED, FINISHED
  * Allowed transitions:
- *   UPCOMING -> OPEN
- *   OPEN -> CLOSED
- *   CLOSED -> RESULTS
+ *   UPCOMING -> LIVE
+ *   LIVE -> PAUSED
+ *   PAUSED -> LIVE
+ *   LIVE -> FINISHED
+ *   PAUSED -> FINISHED
  * Rejects all other transitions. NO RESET IS IMPLEMENTED.
  */
 export const updateElectionStatus = onCall(async (request: CallableRequest<UpdateElectionStatusData>) => {
   const adminInfo = await verifyAdminAuthorization(request);
-  const { electionId, targetStatus } = request.data || {};
+  const { electionId } = request.data || {};
+  const rawTarget = request.data?.targetStatus;
 
   if (!electionId || typeof electionId !== 'string') {
     throw new HttpsError('invalid-argument', 'Valid election ID is required.');
   }
 
-  if (!targetStatus || !['OPEN', 'CLOSED', 'RESULTS'].includes(targetStatus)) {
-    throw new HttpsError('invalid-argument', 'Target status must be OPEN, CLOSED, or RESULTS.');
+  if (!rawTarget) {
+    throw new HttpsError('invalid-argument', 'Target status is required.');
   }
+
+  const normalizedTarget = normalizeElectionStatus(rawTarget);
 
   const electionRef = db.collection('elections').doc(electionId);
   const auditRef = db.collection('auditLogs').doc();
@@ -510,28 +557,39 @@ export const updateElectionStatus = onCall(async (request: CallableRequest<Updat
       throw new HttpsError('not-found', `Election ${electionId} not found.`);
     }
 
-    const currentStatus = electionDoc.data()?.status || 'UPCOMING';
+    const currentRawStatus = electionDoc.data()?.status || 'UPCOMING';
+    const currentStatus = normalizeElectionStatus(currentRawStatus);
 
-    // Strict validation of allowed transitions:
-    // UPCOMING -> OPEN
-    // OPEN -> CLOSED
-    // CLOSED -> RESULTS
+    // Validate 4-state transitions:
+    // UPCOMING -> LIVE
+    // LIVE -> PAUSED
+    // PAUSED -> LIVE
+    // LIVE -> FINISHED
+    // PAUSED -> FINISHED
     const isValidTransition =
-      (currentStatus === 'UPCOMING' && targetStatus === 'OPEN') ||
-      (currentStatus === 'OPEN' && targetStatus === 'CLOSED') ||
-      (currentStatus === 'CLOSED' && targetStatus === 'RESULTS');
+      (currentStatus === 'UPCOMING' && normalizedTarget === 'LIVE') ||
+      (currentStatus === 'LIVE' && normalizedTarget === 'PAUSED') ||
+      (currentStatus === 'PAUSED' && normalizedTarget === 'LIVE') ||
+      (currentStatus === 'LIVE' && normalizedTarget === 'FINISHED') ||
+      (currentStatus === 'PAUSED' && normalizedTarget === 'FINISHED');
 
     if (!isValidTransition) {
+      if (currentStatus === 'FINISHED') {
+        throw new HttpsError(
+          'failed-precondition',
+          'Election is FINISHED. No further status changes are permitted.'
+        );
+      }
       throw new HttpsError(
         'failed-precondition',
-        `Invalid status transition from ${currentStatus} to ${targetStatus}. Allowed transitions: UPCOMING -> OPEN, OPEN -> CLOSED, CLOSED -> RESULTS.`
+        `Invalid status transition from ${currentStatus} to ${normalizedTarget}. Allowed transitions: UPCOMING -> LIVE, LIVE -> PAUSED, PAUSED -> LIVE, LIVE -> FINISHED, PAUSED -> FINISHED.`
       );
     }
 
     // -------------------------------------------------------------
-    // PHASE 7: RESULTS PUBLICATION INTEGRITY & SNAPSHOT ENGINE
+    // RESULTS PUBLICATION & SNAPSHOT ENGINE (when transitioning to FINISHED)
     // -------------------------------------------------------------
-    if (targetStatus === 'RESULTS') {
+    if (normalizedTarget === 'FINISHED') {
       const candidatesSnap = await db.collection('elections').doc(electionId).collection('candidates').get();
       const ballotsSnap = await db.collection('ballots').where('electionId', '==', electionId).get();
       const membersSnap = await db.collection('members').get();
@@ -577,7 +635,7 @@ export const updateElectionStatus = onCall(async (request: CallableRequest<Updat
         });
       });
 
-      // SECTION 5 & 29: TOTAL INTEGRITY VALIDATION
+      // TOTAL INTEGRITY VALIDATION
       const isConsistent = sumCandidateVotes === totalVotesCast && totalVotesCast <= totalEligibleVoters;
       if (!isConsistent) {
         logger.error(`INTEGRITY FAILURE: Candidate sum (${sumCandidateVotes}) != ballots (${totalVotesCast})`);
@@ -590,12 +648,11 @@ export const updateElectionStatus = onCall(async (request: CallableRequest<Updat
       // Sort descending by vote count
       candidateList.sort((a, b) => b.voteCount - a.voteCount);
 
-      // SECTION 11 & 13: DYNAMIC WINNER & TIE HANDLING
+      // DYNAMIC WINNER & TIE HANDLING
       const topVote = candidateList[0]?.voteCount ?? 0;
       const topCandidates = candidateList.filter((c) => c.voteCount === topVote);
       const isTie = topCandidates.length > 1;
 
-      // Assign ranks and winner/tie status
       candidateList.forEach((c, idx) => {
         if (isTie) {
           if (c.voteCount === topVote) {
@@ -629,7 +686,7 @@ export const updateElectionStatus = onCall(async (request: CallableRequest<Updat
       const resultsSnapshot = {
         electionId,
         title: electionDoc.data()?.title || 'NISC Executive Council General Election 2026',
-        status: 'RESULTS',
+        status: 'FINISHED',
         totalEligibleVoters,
         totalVotesCast,
         didNotVote: Math.max(0, totalEligibleVoters - totalVotesCast),
@@ -646,20 +703,25 @@ export const updateElectionStatus = onCall(async (request: CallableRequest<Updat
     }
 
     const updateData: FirebaseFirestore.UpdateData<FirebaseFirestore.DocumentData> = {
-      status: targetStatus,
+      status: normalizedTarget,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
 
     let auditAction = 'ADMIN_ACTION';
-    if (targetStatus === 'OPEN') {
-      updateData.openedAt = admin.firestore.FieldValue.serverTimestamp();
-      auditAction = 'ELECTION_OPENED';
-    } else if (targetStatus === 'CLOSED') {
+    if (normalizedTarget === 'LIVE') {
+      if (!electionDoc.data()?.openedAt) {
+        updateData.openedAt = admin.firestore.FieldValue.serverTimestamp();
+      }
+      updateData.resumedAt = admin.firestore.FieldValue.serverTimestamp();
+      auditAction = currentStatus === 'PAUSED' ? 'ELECTION_RESUMED' : 'ELECTION_STARTED';
+    } else if (normalizedTarget === 'PAUSED') {
+      updateData.pausedAt = admin.firestore.FieldValue.serverTimestamp();
+      auditAction = 'ELECTION_PAUSED';
+    } else if (normalizedTarget === 'FINISHED') {
       updateData.closedAt = admin.firestore.FieldValue.serverTimestamp();
-      auditAction = 'ELECTION_CLOSED';
-    } else if (targetStatus === 'RESULTS') {
       updateData.resultsPublishedAt = admin.firestore.FieldValue.serverTimestamp();
-      auditAction = 'RESULTS_PUBLISHED';
+      updateData.finishedAt = admin.firestore.FieldValue.serverTimestamp();
+      auditAction = 'ELECTION_FINISHED';
     }
 
     transaction.update(electionRef, updateData);
@@ -671,18 +733,18 @@ export const updateElectionStatus = onCall(async (request: CallableRequest<Updat
       electionId,
       metadata: {
         previousStatus: currentStatus,
-        newStatus: targetStatus,
+        newStatus: normalizedTarget,
       },
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    logger.info(`Admin ${adminInfo.email} updated election ${electionId} status from ${currentStatus} to ${targetStatus}`);
+    logger.info(`Admin ${adminInfo.email} updated election ${electionId} status from ${currentStatus} to ${normalizedTarget}`);
 
     return {
       success: true,
       electionId,
       previousStatus: currentStatus,
-      newStatus: targetStatus,
+      newStatus: normalizedTarget,
       updatedBy: adminInfo.email,
     };
   });
@@ -706,15 +768,16 @@ export const getPublicElectionResults = onCall(async (request: CallableRequest<{
   }
 
   const electionData = electionDoc.data();
-  const currentStatus = electionData?.status || 'UPCOMING';
+  const currentRawStatus = electionData?.status || 'UPCOMING';
+  const currentStatus = normalizeElectionStatus(currentRawStatus);
 
-  if (currentStatus !== 'RESULTS') {
+  if (currentStatus !== 'FINISHED') {
     throw new HttpsError(
       'failed-precondition',
-      currentStatus === 'OPEN'
+      currentStatus === 'LIVE'
         ? 'Results Not Available: The election is currently in progress. Please wait until voting is complete and official results are published.'
-        : currentStatus === 'CLOSED'
-        ? 'Results Pending: Voting has ended. The official results will be available once they are published.'
+        : currentStatus === 'PAUSED'
+        ? 'Results Pending: Voting is temporarily paused. The official results will be available once the election is finished.'
         : 'Results Not Available: The election has not started yet.'
     );
   }
@@ -820,40 +883,92 @@ export const getPublicElectionResults = onCall(async (request: CallableRequest<{
 });
 
 /**
- * Convenience helper to start election (UPCOMING -> OPEN)
+ * Convenience helper to start election (UPCOMING -> LIVE)
+ */
+export const startElection = onCall(async (request: CallableRequest<{ electionId?: string }>) => {
+  return await updateElectionStatus.run({
+    ...request,
+    data: {
+      electionId: request.data?.electionId,
+      targetStatus: 'LIVE',
+    },
+  });
+});
+
+/**
+ * Convenience helper to stop / pause election (LIVE -> PAUSED)
+ */
+export const stopElection = onCall(async (request: CallableRequest<{ electionId?: string }>) => {
+  return await updateElectionStatus.run({
+    ...request,
+    data: {
+      electionId: request.data?.electionId,
+      targetStatus: 'PAUSED',
+    },
+  });
+});
+
+/**
+ * Convenience helper to resume election (PAUSED -> LIVE)
+ */
+export const resumeElection = onCall(async (request: CallableRequest<{ electionId?: string }>) => {
+  return await updateElectionStatus.run({
+    ...request,
+    data: {
+      electionId: request.data?.electionId,
+      targetStatus: 'LIVE',
+    },
+  });
+});
+
+/**
+ * Convenience helper to finish election (LIVE or PAUSED -> FINISHED)
+ */
+export const finishElection = onCall(async (request: CallableRequest<{ electionId?: string }>) => {
+  return await updateElectionStatus.run({
+    ...request,
+    data: {
+      electionId: request.data?.electionId,
+      targetStatus: 'FINISHED',
+    },
+  });
+});
+
+/**
+ * Convenience helper to start election (UPCOMING -> OPEN) - legacy alias
  */
 export const openElection = onCall(async (request: CallableRequest<{ electionId?: string }>) => {
   return await updateElectionStatus.run({
     ...request,
     data: {
       electionId: request.data?.electionId,
-      targetStatus: 'OPEN',
+      targetStatus: 'LIVE',
     },
   });
 });
 
 /**
- * Convenience helper to close election (OPEN -> CLOSED)
+ * Convenience helper to close election (OPEN -> CLOSED) - legacy alias
  */
 export const closeElection = onCall(async (request: CallableRequest<{ electionId?: string }>) => {
   return await updateElectionStatus.run({
     ...request,
     data: {
       electionId: request.data?.electionId,
-      targetStatus: 'CLOSED',
+      targetStatus: 'PAUSED',
     },
   });
 });
 
 /**
- * Convenience helper to publish results (CLOSED -> RESULTS)
+ * Convenience helper to publish results (CLOSED -> RESULTS) - legacy alias
  */
 export const publishResults = onCall(async (request: CallableRequest<{ electionId?: string }>) => {
   return await updateElectionStatus.run({
     ...request,
     data: {
       electionId: request.data?.electionId,
-      targetStatus: 'RESULTS',
+      targetStatus: 'FINISHED',
     },
   });
 });

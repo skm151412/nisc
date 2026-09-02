@@ -1,11 +1,15 @@
 /**
- * Strict Election Lifecycle Status Enum
+ * Strict 4-State Election Lifecycle Status Enum
  */
 export enum ElectionStatus {
   UPCOMING = 'UPCOMING',
-  OPEN = 'OPEN',
-  CLOSED = 'CLOSED',
-  RESULTS = 'RESULTS',
+  LIVE = 'LIVE',
+  PAUSED = 'PAUSED',
+  FINISHED = 'FINISHED',
+  // Backward-compatible aliases
+  OPEN = 'LIVE',
+  CLOSED = 'PAUSED',
+  RESULTS = 'FINISHED',
 }
 
 /**

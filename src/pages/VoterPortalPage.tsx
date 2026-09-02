@@ -132,7 +132,10 @@ export const VoterPortalPage: React.FC<VoterPortalPageProps> = ({
   }, []);
 
   const hasAlreadyVoted = Boolean(member?.hasVoted || submissionReceipt?.receiptId);
-  const isElectionOpen = election.status === ElectionStatus.OPEN;
+  const isElectionLive = election.status === ElectionStatus.LIVE || election.status === ElectionStatus.OPEN;
+  const isElectionPaused = election.status === ElectionStatus.PAUSED || election.status === ElectionStatus.CLOSED;
+  const isElectionUpcoming = election.status === ElectionStatus.UPCOMING;
+  const isElectionFinished = election.status === ElectionStatus.FINISHED || election.status === ElectionStatus.RESULTS;
   const isEligible = member?.eligible !== false && profile.isAllowlisted;
 
   const selectedCandidate = candidates.find((c) => c.id === selectedCandidateId) || null;
@@ -140,11 +143,11 @@ export const VoterPortalPage: React.FC<VoterPortalPageProps> = ({
   // Single Candidate Selection Handler
   const handleSelectCandidate = useCallback(
     (candidateId: string) => {
-      if (hasAlreadyVoted || !isElectionOpen) return;
+      if (hasAlreadyVoted || !isElectionLive) return;
       setSelectedCandidateId(candidateId);
       setErrorMessage(null);
     },
-    [hasAlreadyVoted, isElectionOpen]
+    [hasAlreadyVoted, isElectionLive]
   );
 
   // View Candidate Details Modal Handler
@@ -158,8 +161,20 @@ export const VoterPortalPage: React.FC<VoterPortalPageProps> = ({
       setErrorMessage('Please select a candidate before proceeding to confirmation.');
       return;
     }
-    if (!isElectionOpen) {
-      setErrorMessage('Voting is not currently open for this election.');
+    if (isElectionPaused) {
+      setErrorMessage('Voting is temporarily paused. Please check back when the election is resumed.');
+      return;
+    }
+    if (isElectionUpcoming) {
+      setErrorMessage('Voting has not started yet.');
+      return;
+    }
+    if (isElectionFinished) {
+      setErrorMessage('Voting has concluded for this election.');
+      return;
+    }
+    if (!isElectionLive) {
+      setErrorMessage('Voting is not currently live.');
       return;
     }
     if (hasAlreadyVoted) {
@@ -326,7 +341,7 @@ export const VoterPortalPage: React.FC<VoterPortalPageProps> = ({
                 isSelected={selectedCandidateId === candidate.id}
                 onSelect={handleSelectCandidate}
                 onViewDetails={handleViewCandidateDetails}
-                disabled={!isElectionOpen || !isEligible}
+                disabled={!isElectionLive || !isEligible}
               />
             ))}
           </div>
@@ -339,17 +354,25 @@ export const VoterPortalPage: React.FC<VoterPortalPageProps> = ({
                 <h3 className="text-sm font-bold text-white">
                   {selectedCandidate
                     ? `Selected: ${selectedCandidate.codename} (${selectedCandidate.name})`
-                    : isElectionOpen
+                    : isElectionLive
                     ? 'Ready to Cast Your Ballot'
-                    : 'Voting is Currently Closed'}
+                    : isElectionPaused
+                    ? 'Voting is Temporarily Paused'
+                    : isElectionUpcoming
+                    ? 'Election has Not Started'
+                    : 'Voting is Concluded'}
                 </h3>
               </div>
               <p className="text-xs text-slate-400">
                 {selectedCandidate
                   ? 'Proceed to the confirmation dialog to permanently seal your vote.'
-                  : isElectionOpen
+                  : isElectionLive
                   ? 'Select one candidate above to enable the submission action.'
-                  : 'Voting actions are only active when the election state is OPEN.'}
+                  : isElectionPaused
+                  ? 'The election is temporarily paused. Please check back when resumed.'
+                  : isElectionUpcoming
+                  ? 'Voting actions will unlock when an administrator starts the election.'
+                  : 'Voting is closed for this election.'}
               </p>
             </div>
 
@@ -357,8 +380,8 @@ export const VoterPortalPage: React.FC<VoterPortalPageProps> = ({
               id="voter-cast-ballot-action-btn"
               type="button"
               onClick={handleInitiateVote}
-              disabled={!selectedCandidateId || !isElectionOpen || !isEligible || isSubmitting}
-              className="w-full sm:w-auto px-6 py-3.5 rounded-2xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:hover:bg-blue-600 text-white text-xs font-bold transition-all shadow-md flex items-center justify-center gap-2 focus:outline-hidden focus:ring-2 focus:ring-blue-400"
+              disabled={!selectedCandidateId || !isElectionLive || !isEligible || isSubmitting}
+              className="w-full sm:w-auto px-6 py-3.5 rounded-2xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:hover:bg-blue-600 text-white text-xs font-bold transition-all shadow-md flex items-center justify-center gap-2 focus:outline-hidden focus:ring-2 focus:ring-blue-400 cursor-pointer disabled:cursor-not-allowed"
               aria-label={
                 selectedCandidate
                   ? `Proceed to vote for candidate ${selectedCandidate.codename}`
@@ -386,7 +409,7 @@ export const VoterPortalPage: React.FC<VoterPortalPageProps> = ({
           handleSelectCandidate(candidateId);
           setActiveModalCandidate(null);
         }}
-        disabled={!isElectionOpen || hasAlreadyVoted || !isEligible}
+        disabled={!isElectionLive || hasAlreadyVoted || !isEligible}
       />
 
       {/* Dedicated Confirmation Modal with Double-Confirmation Safety */}

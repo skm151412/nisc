@@ -28,6 +28,7 @@ export const ResultsPendingView: React.FC<ResultsPendingViewProps> = ({
             'Candidate profiles are available for review. Voting will open when the election is officially started.',
         };
 
+      case ElectionStatus.LIVE:
       case ElectionStatus.OPEN:
         return {
           icon: <Radio className="w-8 h-8 text-emerald-600 animate-pulse" />,
@@ -35,24 +36,37 @@ export const ResultsPendingView: React.FC<ResultsPendingViewProps> = ({
           borderColor: 'border-emerald-200',
           badgeText: 'Voting in Progress',
           badgeStyle: 'bg-emerald-100 text-emerald-800 border-emerald-300',
-          title: 'Results Not Available',
-          subtitle: 'The election is currently in progress.',
+          title: 'Results Concealed During Voting',
+          subtitle: 'The election is currently live.',
           description:
-            'Live vote counts are concealed during the voting period to protect voter privacy and ballot integrity. Please check back when results are officially published.',
+            'Live vote counts are concealed during the active voting period to protect voter privacy and ballot integrity. Official results will be published once the election is completed.',
+        };
+
+      case ElectionStatus.PAUSED:
+        return {
+          icon: <AlertCircle className="w-8 h-8 text-amber-600" />,
+          bgColor: 'bg-amber-50',
+          borderColor: 'border-amber-200',
+          badgeText: 'Election Paused',
+          badgeStyle: 'bg-amber-100 text-amber-800 border-amber-300',
+          title: 'Voting Temporarily Paused',
+          subtitle: 'The election is currently paused by administration.',
+          description:
+            'Voting has been paused. Results will become available when the election is officially finished and certified.',
         };
 
       case ElectionStatus.CLOSED:
       default:
         return {
-          icon: <AlertCircle className="w-8 h-8 text-rose-600" />,
-          bgColor: 'bg-rose-50',
-          borderColor: 'border-rose-200',
-          badgeText: 'Voting Closed',
-          badgeStyle: 'bg-rose-100 text-rose-800 border-rose-300',
-          title: 'Election Closed',
-          subtitle: 'Voting has ended.',
+          icon: <AlertCircle className="w-8 h-8 text-slate-600" />,
+          bgColor: 'bg-slate-50',
+          borderColor: 'border-slate-200',
+          badgeText: 'Results Pending Certification',
+          badgeStyle: 'bg-slate-100 text-slate-800 border-slate-300',
+          title: 'Election Results Pending',
+          subtitle: 'Voting has concluded.',
           description:
-            'Voting has concluded. Results are currently being finalized and will be available once officially certified.',
+            'Official results are being certified and will be made public once finalized by the election administrators.',
         };
     }
   };

@@ -6,6 +6,7 @@ export const SYSTEM_CONSTANTS = {
   ORGANIZATION_FULL_NAME: 'National Institute Student Council',
   SYSTEM_NAME: 'NISC Secure Election System',
   DESIGNATED_ADMIN_EMAIL: 'skm151412@gmail.com',
+  DESIGNATED_ADMIN_EMAILS: ['skm151412@gmail.com', 'mohiuddinahmad9abcs@gmail.com'] as const,
   TOTAL_APPROVED_VOTERS: 70,
   TOTAL_CANDIDATES: 3,
   COLLECTIONS: {

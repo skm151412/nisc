@@ -79,7 +79,17 @@ export async function runPhase10SecuritySuite(): Promise<SecurityAuditSummary> {
   const adminProfile: AuthUserProfile = {
     uid: 'admin-authorized-uid-1',
     email: DESIGNATED_ADMIN_EMAIL,
-    displayName: 'Authorized Admin',
+    displayName: 'Authorized Admin 1',
+    emailVerified: true,
+    role: 'ADMIN',
+    isAllowlisted: true,
+    isAdmin: true,
+  };
+
+  const adminProfile2: AuthUserProfile = {
+    uid: 'admin-authorized-uid-2',
+    email: 'mohiuddinahmad9abcs@gmail.com',
+    displayName: 'Authorized Admin 2',
     emailVerified: true,
     role: 'ADMIN',
     isAllowlisted: true,
@@ -479,12 +489,12 @@ export async function runPhase10SecuritySuite(): Promise<SecurityAuditSummary> {
     );
   }
 
-  // SEC-P10-03: Authorize designated admin skm151412@gmail.com
+  // SEC-P10-03A: Authorize designated admin 1 skm151412@gmail.com
   try {
     const stats = await getAdminElectionStats(INITIAL_ELECTION_ID, adminProfile);
     recordTest(
-      'SEC-P10-03',
-      'Designated Administrator Authorization',
+      'SEC-P10-03A',
+      'Administrator 1 Authorization (skm151412@gmail.com)',
       'AUTHORIZATION',
       'Authoritative admin skm151412@gmail.com must successfully access admin stats',
       Boolean(stats && typeof stats.totalEligibleVoters === 'number'),
@@ -493,8 +503,8 @@ export async function runPhase10SecuritySuite(): Promise<SecurityAuditSummary> {
     );
   } catch (err: unknown) {
     recordTest(
-      'SEC-P10-03',
-      'Designated Administrator Authorization',
+      'SEC-P10-03A',
+      'Administrator 1 Authorization (skm151412@gmail.com)',
       'AUTHORIZATION',
       'Authoritative admin skm151412@gmail.com must successfully access admin stats',
       false,
@@ -503,91 +513,139 @@ export async function runPhase10SecuritySuite(): Promise<SecurityAuditSummary> {
     );
   }
 
+  // SEC-P10-03B: Authorize designated admin 2 mohiuddinahmad9abcs@gmail.com
+  try {
+    const stats2 = await getAdminElectionStats(INITIAL_ELECTION_ID, adminProfile2);
+    recordTest(
+      'SEC-P10-03B',
+      'Administrator 2 Authorization (mohiuddinahmad9abcs@gmail.com)',
+      'AUTHORIZATION',
+      'Authoritative admin mohiuddinahmad9abcs@gmail.com must have equal administrative access',
+      Boolean(stats2 && typeof stats2.totalEligibleVoters === 'number'),
+      'Admin stats retrieved',
+      `Stats retrieved with ${stats2.totalEligibleVoters} eligible voters`
+    );
+  } catch (err: unknown) {
+    recordTest(
+      'SEC-P10-03B',
+      'Administrator 2 Authorization (mohiuddinahmad9abcs@gmail.com)',
+      'AUTHORIZATION',
+      'Authoritative admin mohiuddinahmad9abcs@gmail.com must have equal administrative access',
+      false,
+      'Admin stats retrieved',
+      String(err)
+    );
+  }
+
   // --------------------------------------------------------------------------
-  // Category 3: Lifecycle State Machine Invariants
+  // Category 3: Lifecycle State Machine Invariants (4-State Lifecycle)
   // --------------------------------------------------------------------------
 
-  // SEC-P10-04: UPCOMING -> OPEN valid transition
+  // SEC-P10-04: UPCOMING -> LIVE valid transition
   resetInMemoryAdminState();
   try {
-    const res = await updateElectionStatus(ElectionStatus.OPEN, INITIAL_ELECTION_ID, adminProfile);
+    const res = await updateElectionStatus(ElectionStatus.LIVE, INITIAL_ELECTION_ID, adminProfile);
     recordTest(
       'SEC-P10-04',
-      'Sequential Transition: UPCOMING -> OPEN',
+      'Sequential Transition: UPCOMING -> LIVE',
       'LIFECYCLE',
-      'Administrator starts election transitioning status to OPEN',
-      res.status === ElectionStatus.OPEN,
-      'OPEN',
+      'Administrator 1 starts election transitioning status to LIVE',
+      res.status === ElectionStatus.LIVE,
+      'LIVE',
       res.status
     );
   } catch (err: unknown) {
     recordTest(
       'SEC-P10-04',
-      'Sequential Transition: UPCOMING -> OPEN',
+      'Sequential Transition: UPCOMING -> LIVE',
       'LIFECYCLE',
-      'Administrator starts election transitioning status to OPEN',
+      'Administrator 1 starts election transitioning status to LIVE',
       false,
-      'OPEN',
+      'LIVE',
       String(err)
     );
   }
 
-  // SEC-P10-05: OPEN -> CLOSED valid transition
+  // SEC-P10-05: LIVE -> PAUSED valid transition (Admin 2)
   try {
-    const res = await updateElectionStatus(ElectionStatus.CLOSED, INITIAL_ELECTION_ID, adminProfile);
+    const res = await updateElectionStatus(ElectionStatus.PAUSED, INITIAL_ELECTION_ID, adminProfile2);
     recordTest(
       'SEC-P10-05',
-      'Sequential Transition: OPEN -> CLOSED',
+      'Sequential Transition: LIVE -> PAUSED (by Admin 2)',
       'LIFECYCLE',
-      'Administrator closes election transitioning status to CLOSED',
-      res.status === ElectionStatus.CLOSED,
-      'CLOSED',
+      'Administrator 2 pauses election transitioning status to PAUSED',
+      res.status === ElectionStatus.PAUSED,
+      'PAUSED',
       res.status
     );
   } catch (err: unknown) {
     recordTest(
       'SEC-P10-05',
-      'Sequential Transition: OPEN -> CLOSED',
+      'Sequential Transition: LIVE -> PAUSED (by Admin 2)',
       'LIFECYCLE',
-      'Administrator closes election transitioning status to CLOSED',
+      'Administrator 2 pauses election transitioning status to PAUSED',
       false,
-      'CLOSED',
+      'PAUSED',
       String(err)
     );
   }
 
-  // SEC-P10-06: CLOSED -> RESULTS valid transition
+  // SEC-P10-05B: PAUSED -> LIVE valid resume transition
   try {
-    const res = await updateElectionStatus(ElectionStatus.RESULTS, INITIAL_ELECTION_ID, adminProfile);
+    const res = await updateElectionStatus(ElectionStatus.LIVE, INITIAL_ELECTION_ID, adminProfile);
+    recordTest(
+      'SEC-P10-05B',
+      'Sequential Transition: PAUSED -> LIVE (Resume)',
+      'LIFECYCLE',
+      'Administrator resumes election transitioning status back to LIVE',
+      res.status === ElectionStatus.LIVE,
+      'LIVE',
+      res.status
+    );
+  } catch (err: unknown) {
+    recordTest(
+      'SEC-P10-05B',
+      'Sequential Transition: PAUSED -> LIVE (Resume)',
+      'LIFECYCLE',
+      'Administrator resumes election transitioning status back to LIVE',
+      false,
+      'LIVE',
+      String(err)
+    );
+  }
+
+  // SEC-P10-06: LIVE -> FINISHED valid transition
+  try {
+    const res = await updateElectionStatus(ElectionStatus.FINISHED, INITIAL_ELECTION_ID, adminProfile);
     recordTest(
       'SEC-P10-06',
-      'Sequential Transition: CLOSED -> RESULTS',
+      'Sequential Transition: LIVE -> FINISHED',
       'LIFECYCLE',
-      'Administrator publishes final election results',
-      res.status === ElectionStatus.RESULTS,
-      'RESULTS',
+      'Administrator finishes election and publishes authoritative results',
+      res.status === ElectionStatus.FINISHED,
+      'FINISHED',
       res.status
     );
   } catch (err: unknown) {
     recordTest(
       'SEC-P10-06',
-      'Sequential Transition: CLOSED -> RESULTS',
+      'Sequential Transition: LIVE -> FINISHED',
       'LIFECYCLE',
-      'Administrator publishes final election results',
+      'Administrator finishes election and publishes authoritative results',
       false,
-      'RESULTS',
+      'FINISHED',
       String(err)
     );
   }
 
-  // SEC-P10-07: Illegal backward transition (RESULTS -> OPEN)
+  // SEC-P10-07: Illegal backward transition (FINISHED -> LIVE)
   try {
-    await updateElectionStatus(ElectionStatus.OPEN, INITIAL_ELECTION_ID, adminProfile);
+    await updateElectionStatus(ElectionStatus.LIVE, INITIAL_ELECTION_ID, adminProfile);
     recordTest(
       'SEC-P10-07',
-      'Illegal Transition Rejection: RESULTS -> OPEN',
+      'Illegal Transition Rejection: FINISHED -> LIVE',
       'LIFECYCLE',
-      'Published election cannot be re-opened',
+      'Finished election is immutable and cannot be re-opened',
       false,
       'Invalid state transition error',
       'Unexpectedly succeeded'
@@ -596,24 +654,24 @@ export async function runPhase10SecuritySuite(): Promise<SecurityAuditSummary> {
     const isError = err instanceof Error && err.message.includes('Invalid');
     recordTest(
       'SEC-P10-07',
-      'Illegal Transition Rejection: RESULTS -> OPEN',
+      'Illegal Transition Rejection: FINISHED -> LIVE',
       'LIFECYCLE',
-      'Published election cannot be re-opened',
+      'Finished election is immutable and cannot be re-opened',
       isError,
       'Invalid state transition error',
       isError ? 'Transition rejected as expected' : String(err)
     );
   }
 
-  // SEC-P10-08: Illegal skip transition (UPCOMING -> RESULTS)
+  // SEC-P10-08: Illegal skip transition (UPCOMING -> FINISHED)
   resetInMemoryAdminState();
   try {
-    await updateElectionStatus(ElectionStatus.RESULTS, INITIAL_ELECTION_ID, adminProfile);
+    await updateElectionStatus(ElectionStatus.FINISHED, INITIAL_ELECTION_ID, adminProfile);
     recordTest(
       'SEC-P10-08',
-      'Illegal Transition Rejection: UPCOMING -> RESULTS',
+      'Illegal Transition Rejection: UPCOMING -> FINISHED',
       'LIFECYCLE',
-      'Cannot skip directly from UPCOMING to RESULTS',
+      'Cannot skip directly from UPCOMING to FINISHED without starting election',
       false,
       'Invalid state transition error',
       'Unexpectedly succeeded'
@@ -622,9 +680,9 @@ export async function runPhase10SecuritySuite(): Promise<SecurityAuditSummary> {
     const isError = err instanceof Error && err.message.includes('Invalid');
     recordTest(
       'SEC-P10-08',
-      'Illegal Transition Rejection: UPCOMING -> RESULTS',
+      'Illegal Transition Rejection: UPCOMING -> FINISHED',
       'LIFECYCLE',
-      'Cannot skip directly from UPCOMING to RESULTS',
+      'Cannot skip directly from UPCOMING to FINISHED without starting election',
       isError,
       'Invalid state transition error',
       isError ? 'Transition rejected as expected' : String(err)

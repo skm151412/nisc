@@ -46,25 +46,34 @@ export const HomePage: React.FC<HomePageProps> = ({
 
   const getStatusBadge = () => {
     switch (election.status) {
+      case ElectionStatus.LIVE:
       case ElectionStatus.OPEN:
         return (
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-semibold">
             <Radio className="w-3.5 h-3.5 animate-pulse text-emerald-400" />
-            <span>ELECTION IN PROGRESS</span>
+            <span>🟢 ELECTION IS LIVE</span>
+          </div>
+        );
+      case ElectionStatus.PAUSED:
+        return (
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-semibold">
+            <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+            <span>⏸ VOTING TEMPORARILY PAUSED</span>
           </div>
         );
       case ElectionStatus.CLOSED:
         return (
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold">
             <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
-            <span>VOTING CLOSED</span>
+            <span>VOTING CONCLUDED</span>
           </div>
         );
+      case ElectionStatus.FINISHED:
       case ElectionStatus.RESULTS:
         return (
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30 text-xs font-semibold">
             <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
-            <span>RESULTS AVAILABLE</span>
+            <span>🏆 ELECTION FINISHED — RESULTS AVAILABLE</span>
           </div>
         );
       case ElectionStatus.UPCOMING:
@@ -72,7 +81,7 @@ export const HomePage: React.FC<HomePageProps> = ({
         return (
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-semibold">
             <Clock className="w-3.5 h-3.5 text-amber-400" />
-            <span>UPCOMING</span>
+            <span>🟡 UPCOMING</span>
           </div>
         );
     }
@@ -80,12 +89,16 @@ export const HomePage: React.FC<HomePageProps> = ({
 
   const getStatusMessage = () => {
     switch (election.status) {
+      case ElectionStatus.LIVE:
       case ElectionStatus.OPEN:
-        return 'Voting is now open. Cast your vote before the election closes.';
-      case ElectionStatus.CLOSED:
-        return 'Voting has ended. Results will be available after the election is officially closed.';
+        return 'Voting is currently live. Cast your official ballot before the election concludes.';
+      case ElectionStatus.PAUSED:
+        return 'Voting is temporarily paused. Please check back when the election is resumed.';
+      case ElectionStatus.FINISHED:
       case ElectionStatus.RESULTS:
         return 'The election has concluded and official certified results are now published.';
+      case ElectionStatus.CLOSED:
+        return 'Voting has ended. Results will be available once finalized.';
       case ElectionStatus.UPCOMING:
       default:
         return 'Voting has not started yet. Please check back when the election opens.';

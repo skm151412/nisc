@@ -24,12 +24,14 @@ service cloud.firestore {
     }
 
     // Super Administrator Predicate
-    // Authorized only for the verified administrative identity: skm151412@gmail.com
+    // Authorized only for the verified administrative identities:
+    // - skm151412@gmail.com
+    // - mohiuddinahmad9abcs@gmail.com
     // with email_verified == true, or verified server-assigned custom claim admin == true,
     // or verified existence in /admins/{uid}.
     function isSuperAdmin() {
       return isSignedIn() && (
-        (request.auth.token.email == 'skm151412@gmail.com' && request.auth.token.email_verified == true) ||
+        (request.auth.token.email in ['skm151412@gmail.com', 'mohiuddinahmad9abcs@gmail.com'] && request.auth.token.email_verified == true) ||
         request.auth.token.admin == true ||
         exists(/databases/$(database)/documents/admins/$(request.auth.uid))
       );
@@ -106,9 +108,10 @@ service cloud.firestore {
       // =======================================================================
       match /results/{resultDoc} {
         // Super admin can always read;
-        // Authenticated voters can read ONLY when election status is RESULTS
+        // Authenticated voters can read ONLY when election status is FINISHED or RESULTS
         allow get, list: if isSignedIn() && (
           isSuperAdmin() ||
+          get(/databases/$(database)/documents/elections/$(electionId)).data.status == 'FINISHED' ||
           get(/databases/$(database)/documents/elections/$(electionId)).data.status == 'RESULTS'
         );
 

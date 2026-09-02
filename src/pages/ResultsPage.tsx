@@ -41,13 +41,16 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ profile, onNavigate })
   const [loading, setLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
 
+  const isFinished = election.status === ElectionStatus.FINISHED;
+
   // Subscribe to election doc
   useEffect(() => {
     const unsubscribeElection = subscribeToElection(
       INITIAL_ELECTION_ID,
       (updatedElection) => {
         setElection(updatedElection);
-        if (updatedElection.status !== ElectionStatus.RESULTS) {
+        const isUpFinished = updatedElection.status === ElectionStatus.FINISHED;
+        if (!isUpFinished) {
           setResults(null);
           setLoading(false);
         }
@@ -62,9 +65,9 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ profile, onNavigate })
     };
   }, []);
 
-  // Fetch / Subscribe to results if in RESULTS status
+  // Fetch / Subscribe to results if in FINISHED or RESULTS status
   useEffect(() => {
-    if (election.status === ElectionStatus.RESULTS) {
+    if (isFinished) {
       setLoading(true);
       const unsubscribeResults = subscribeToElectionResults(
         INITIAL_ELECTION_ID,
@@ -90,7 +93,7 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ profile, onNavigate })
       setResults(null);
       setLoading(false);
     }
-  }, [election.status]);
+  }, [isFinished]);
 
   const handleManualRefresh = async () => {
     setIsRefreshing(true);
@@ -102,7 +105,7 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ profile, onNavigate })
     }
   };
 
-  if (loading && election.status === ElectionStatus.RESULTS) {
+  if (loading && isFinished) {
     return (
       <div className="py-24 flex flex-col items-center justify-center space-y-3">
         <LoadingSpinner size="lg" />
@@ -111,8 +114,8 @@ export const ResultsPage: React.FC<ResultsPageProps> = ({ profile, onNavigate })
     );
   }
 
-  // If election is not yet in RESULTS state, show the protected pending view (Zero-Leakage)
-  if (election.status !== ElectionStatus.RESULTS) {
+  // If election is not yet in FINISHED/RESULTS state, show the protected pending view (Zero-Leakage)
+  if (!isFinished) {
     return (
       <ResultsPendingView
         status={election.status}
