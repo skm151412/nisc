@@ -1,0 +1,160 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =========================================================================
+    // NISC ELECTION SYSTEM - SECURITY RULES (PHASE 3)
+    // Architecture: Zero-Trust Client Model & Principle of Least Privilege
+    // Direct client access is strictly constrained by cryptographic identity.
+    // Untrusted browsers are denied destructive or unverified operations.
+    // =========================================================================
+
+    // Basic Authentication & Verification Predicates
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Super Administrator Predicate
+    // Authorized only for the verified administrative identity: skm151412@gmail.com
+    // with email_verified == true, or verified server-assigned custom claim admin == true,
+    // or verified existence in /admins/{uid}.
+    function isSuperAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email == 'skm151412@gmail.com' && request.auth.token.email_verified == true) ||
+        request.auth.token.admin == true ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // Checks if the authenticated user owns the document record matching their UID
+    function isMemberOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Default Deny-All Catch-All Rule
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // 1. MEMBERS COLLECTION (/members/{uid})
+    // Indexed strictly by Firebase Authentication UID.
+    // =========================================================================
+    match /members/{uid} {
+      // Super admin can read all member records;
+      // An authenticated voter can only GET their own member document.
+      allow get: if isSuperAdmin() || isMemberOwner(uid);
+
+      // Ordinary voters are STRICTLY FORBIDDEN from listing or querying the collection.
+      // This protects the voter list against scraping or enumeration attacks.
+      allow list: if isSuperAdmin();
+
+      // Normal voters cannot create, modify, or delete member documents.
+      // Modifying hasVoted, eligible, email, rollNumber is strictly forbidden on the client.
+      allow create, update, delete: if isSuperAdmin();
+    }
+
+    // =========================================================================
+    // 2. ADMINS COLLECTION (/admins/{uid})
+    // Indexed strictly by Firebase Authentication UID.
+    // =========================================================================
+    match /admins/{uid} {
+      // Only the verified Super Admin can read or write admin records.
+      // Non-admins cannot read or elevate themselves into the admins collection.
+      allow read: if isSuperAdmin();
+      allow write: if isSuperAdmin();
+    }
+
+    // =========================================================================
+    // 3. ELECTIONS COLLECTION (/elections/{electionId})
+    // Top-level election configuration and status lifecycle.
+    // =========================================================================
+    match /elections/{electionId} {
+      // Authenticated users can read safe election information (status, title, description).
+      allow get, list: if isSignedIn();
+
+      // Only Super Admin can mutate election settings or change lifecycle state.
+      allow write: if isSuperAdmin();
+
+      // =======================================================================
+      // 4. CANDIDATES SUBCOLLECTION (/elections/{electionId}/candidates/{candidateId})
+      // Official candidates standing for election positions.
+      // =======================================================================
+      match /candidates/{candidateId} {
+        // Authenticated voters can read candidate details (vision, pillars, codename).
+        allow get, list: if isSignedIn();
+
+        // Clients CANNOT create, modify, or delete candidates.
+        // Direct modification of voteCount by clients is strictly denied.
+        allow write: if isSuperAdmin();
+      }
+
+      // =======================================================================
+      // 4b. RESULTS SUBCOLLECTION (/elections/{electionId}/results/{resultDoc})
+      // Official aggregate election results summary.
+      // Strictly protected against pre-publication leakage:
+      // Visible to authenticated voters ONLY AFTER results are officially published.
+      // =======================================================================
+      match /results/{resultDoc} {
+        // Super admin can always read;
+        // Authenticated voters can read ONLY when election status is RESULTS
+        allow get, list: if isSignedIn() && (
+          isSuperAdmin() ||
+          get(/databases/$(database)/documents/elections/$(electionId)).data.status == 'RESULTS'
+        );
+
+        // Direct client writes are forbidden; results snapshot is generated by trusted backend.
+        allow write: if isSuperAdmin();
+      }
+    }
+
+    // =========================================================================
+    // 5. BALLOTS COLLECTION (/ballots/{ballotId})
+    // Immutable sealed votes recording voter-to-candidate mapping.
+    // =========================================================================
+    match /ballots/{ballotId} {
+      // Ordinary voters are strictly DENIED from querying or reading ballots.
+      // Only Super Admin can read ballots for auditability and verification.
+      allow read: if isSuperAdmin();
+
+      // All direct client writes are STRICTLY FORBIDDEN.
+      // Ballot insertion will be handled via trusted backend transaction in Phase 4.
+      allow write: if false;
+    }
+
+    // =========================================================================
+    // 6. AUDIT LOGS COLLECTION (/auditLogs/{auditId})
+    // Append-only tamper-resistant security event ledger.
+    // =========================================================================
+    match /auditLogs/{auditId} {
+      // Only Super Admin can read audit logs.
+      allow read: if isSuperAdmin();
+
+      // Direct client writes are STRICTLY FORBIDDEN.
+      // Audit logs are created by trusted backend processes.
+      allow write: if false;
+    }
+
+    // =========================================================================
+    // 7. VOTE LOCKS COLLECTION (/voteLocks/{lockId})
+    // Transaction idempotency & concurrency lock: UNIQUE(electionId, voterUid)
+    // =========================================================================
+    match /voteLocks/{lockId} {
+      // Only Super Admin can read vote locks for audit.
+      allow read: if isSuperAdmin();
+
+      // Direct client writes are STRICTLY FORBIDDEN.
+      // Exclusively managed by the backend atomic transaction engine.
+      allow write: if false;
+    }
+  }
+}

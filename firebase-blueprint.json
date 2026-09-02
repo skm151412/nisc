@@ -1,0 +1,350 @@
+{
+  "entities": {
+    "Member": {
+      "title": "Member",
+      "description": "Approved NISC student organization voter indexed by Auth UID",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Full name of the approved voter"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Institutional/approved email address of the voter"
+        },
+        "rollNumber": {
+          "type": "string",
+          "maxLength": 30,
+          "description": "Institutional Student Roll Number"
+        },
+        "batch": {
+          "type": "string",
+          "maxLength": 20,
+          "description": "Batch year (e.g., Batch 2024)"
+        },
+        "department": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Academic department"
+        },
+        "state": {
+          "type": "string",
+          "maxLength": 50,
+          "description": "Home state or regional affiliation"
+        },
+        "eligible": {
+          "type": "boolean",
+          "description": "Voter eligibility status (default: true)"
+        },
+        "hasVoted": {
+          "type": "boolean",
+          "description": "Flag indicating whether the voter has cast a ballot (default: false)"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the record was created"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the record was last updated"
+        }
+      },
+      "required": [
+        "name",
+        "email",
+        "rollNumber",
+        "batch",
+        "department",
+        "state",
+        "eligible",
+        "hasVoted",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Admin": {
+      "title": "Admin",
+      "description": "Designated election administrator record indexed by Auth UID",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Admin email address (skm151412@gmail.com)"
+        },
+        "active": {
+          "type": "boolean",
+          "description": "Active administrator status flag"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Admin record creation timestamp"
+        }
+      },
+      "required": ["email", "active", "createdAt"]
+    },
+    "Election": {
+      "title": "Election",
+      "description": "NISC election configuration, status, and timeline metadata",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 150,
+          "description": "Official title of the election"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "Election description, bylaws, and guidelines"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["UPCOMING", "OPEN", "CLOSED", "RESULTS"],
+          "description": "Strict election lifecycle status"
+        },
+        "totalEligibleVoters": {
+          "type": "integer",
+          "description": "Total number of allowlisted voters (70)"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Election creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp"
+        },
+        "openedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when voting opened, or null"
+        },
+        "closedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when voting closed, or null"
+        },
+        "resultsPublishedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when official results were published, or null"
+        }
+      },
+      "required": [
+        "title",
+        "description",
+        "status",
+        "totalEligibleVoters",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Candidate": {
+      "title": "Candidate",
+      "description": "Official candidate standing for election positions",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 50,
+          "description": "Unique candidate identifier (e.g. zeus, athena, poseidon)"
+        },
+        "slug": {
+          "type": "string",
+          "maxLength": 50,
+          "description": "URL/Path friendly candidate slug"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Full candidate name"
+        },
+        "codename": {
+          "type": "string",
+          "maxLength": 50,
+          "description": "Council candidate codename"
+        },
+        "year": {
+          "type": "string",
+          "maxLength": 10,
+          "description": "Academic cohort year (e.g. Y25)"
+        },
+        "department": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Academic department"
+        },
+        "state": {
+          "type": "string",
+          "maxLength": 50,
+          "description": "State or region of origin"
+        },
+        "color": {
+          "type": "string",
+          "maxLength": 20,
+          "description": "Primary theme color hex code"
+        },
+        "colorLight": {
+          "type": "string",
+          "maxLength": 20,
+          "description": "Light background accent color hex code"
+        },
+        "icon": {
+          "type": "string",
+          "maxLength": 10,
+          "description": "Candidate insignia symbol"
+        },
+        "contestingFor": {
+          "type": "string",
+          "description": "Contested offices or positions"
+        },
+        "vision": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "Core leadership vision statement"
+        },
+        "closingStatement": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "Final campaign address to the student body"
+        },
+        "voteCount": {
+          "type": "integer",
+          "description": "Aggregated vote tally (server-authoritative only)"
+        }
+      },
+      "required": [
+        "id",
+        "slug",
+        "name",
+        "codename",
+        "year",
+        "department",
+        "state",
+        "color",
+        "colorLight",
+        "icon",
+        "vision",
+        "closingStatement",
+        "voteCount"
+      ]
+    },
+    "Ballot": {
+      "title": "Ballot",
+      "description": "Sealed, immutable ballot recording voter and candidate mapping",
+      "type": "object",
+      "properties": {
+        "electionId": {
+          "type": "string",
+          "description": "Election identifier (e.g., nisc-election-2026)"
+        },
+        "voterUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the voter"
+        },
+        "voterEmail": {
+          "type": "string",
+          "format": "email",
+          "description": "Email address of the voter (for admin audit)"
+        },
+        "candidateId": {
+          "type": "string",
+          "description": "ID of selected candidate"
+        },
+        "receiptId": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Cryptographic receipt identifier issued to the voter"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the ballot was sealed"
+        }
+      },
+      "required": [
+        "electionId",
+        "voterUid",
+        "voterEmail",
+        "candidateId",
+        "receiptId",
+        "createdAt"
+      ]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable security and administrative audit event record",
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Action performed (e.g., USER_LOGIN, VOTE_CAST, ELECTION_OPENED)"
+        },
+        "actorUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of actor"
+        },
+        "actorEmail": {
+          "type": "string",
+          "format": "email",
+          "description": "Verified email of actor"
+        },
+        "electionId": {
+          "type": "string",
+          "description": "Associated election ID or null"
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Structured event contextual metadata"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of audit event creation"
+        }
+      },
+      "required": [
+        "action",
+        "actorUid",
+        "actorEmail",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/members/{uid}": {
+      "schema": "Member",
+      "description": "Voter records indexed by Firebase Auth UID. Voter can only get own document. No public or voter queries allowed. Client writes denied."
+    },
+    "/admins/{uid}": {
+      "schema": "Admin",
+      "description": "Admin authorization documents indexed by UID. Super Admin only read and write."
+    },
+    "/elections/{electionId}": {
+      "schema": "Election",
+      "description": "Official election documents. Authenticated users can get/list. Super Admin only writes."
+    },
+    "/elections/{electionId}/candidates/{candidateId}": {
+      "schema": "Candidate",
+      "description": "Candidates standing for election. Authenticated users can get/list. Super Admin only writes. Vote count immutable by client."
+    },
+    "/ballots/{ballotId}": {
+      "schema": "Ballot",
+      "description": "Cast ballots associating voter and candidate. Client writes strictly denied. Super admin audit read only."
+    },
+    "/auditLogs/{auditId}": {
+      "schema": "AuditLog",
+      "description": "Immutable security audit records. Direct client writes denied. Super admin read only."
+    }
+  }
+}

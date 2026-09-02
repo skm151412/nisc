@@ -1,0 +1,6 @@
+{
+  "name": "NISC Election Portal 2026",
+  "description": "Official Student Council Election Portal for NISC Executive Council General Election 2026.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
