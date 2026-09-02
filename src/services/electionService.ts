@@ -9,8 +9,7 @@
  */
 
 import { doc, getDoc, collection, getDocs, onSnapshot, Unsubscribe } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
-import { db, functions } from './firebase';
+import { db } from './firebase';
 import { Election, Candidate, Member, ElectionStatus, ElectionResultsSummary } from '../types';
 import { INITIAL_ELECTION, INITIAL_CANDIDATES, INITIAL_ELECTION_ID } from '../config/electionData';
 import { logger } from '../utils/logger';
@@ -196,7 +195,6 @@ function sanitizeCandidates(candidates: Candidate[]): Candidate[] {
 export async function getElectionResults(
   electionId: string = INITIAL_ELECTION_ID
 ): Promise<ElectionResultsSummary | null> {
-  // First attempt: direct Firestore document read on /elections/{electionId}/results/summary
   if (db) {
     try {
       const summaryRef = doc(db, 'elections', electionId, 'results', 'summary');
@@ -211,26 +209,6 @@ export async function getElectionResults(
     } catch (err) {
       logger.info({
         message: 'Direct results read unfulfilled or not published yet',
-        context: 'ElectionService',
-        error: err,
-      });
-    }
-  }
-
-  // Second attempt: Call trusted Cloud Function getPublicElectionResults
-  if (functions) {
-    try {
-      const getResultsFn = httpsCallable<{ electionId: string }, ElectionResultsSummary>(
-        functions,
-        'getPublicElectionResults'
-      );
-      const res = await getResultsFn({ electionId });
-      if (res.data) {
-        return res.data;
-      }
-    } catch (err) {
-      logger.warn({
-        message: 'getPublicElectionResults callable failed or rejected (election not published)',
         context: 'ElectionService',
         error: err,
       });

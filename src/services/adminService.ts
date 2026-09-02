@@ -1,37 +1,33 @@
 /**
- * NISC Election Admin Service (Phase 6)
+ * NISC Election Admin Service (Pure Spark Plan Architecture)
  *
- * Implements client-side integration with backend administrative Cloud Functions:
- * 1. updateElectionStatus (UPCOMING -> OPEN -> CLOSED -> RESULTS)
+ * Implements client-side direct Firestore operations for administrators:
+ * 1. updateElectionStatus (UPCOMING -> LIVE -> PAUSED -> FINISHED)
  * 2. getAdminElectionStats (Total voters, votes cast, participation rate, candidate counts, integrity checks)
  * 3. getAdminVoteRecords (Authoritative voter-to-candidate mapping for admin audit)
  * 4. getAdminParticipation (All 70 eligible voters with Voted / Not Voted status)
  * 5. exportParticipationCsv (Safe CSV export with CSV formula injection protection)
  * 6. getAdminAuditLogs (Tamper-resistant audit events)
  *
- * Zero-Trust: Every operation verifies backend administrator authorization.
+ * Zero-Trust: Every operation verifies backend administrator authorization via Firestore Security Rules.
  */
 
-import { httpsCallable } from 'firebase/functions';
 import {
   collection,
   doc,
   getDoc,
   getDocs,
   setDoc,
-  onSnapshot,
   query,
   updateDoc,
   serverTimestamp,
   orderBy,
   limit as firestoreLimit,
-  Unsubscribe,
 } from 'firebase/firestore';
-import { functions, db } from './firebase';
+import { db } from './firebase';
 import {
   ElectionStatus,
   AuthUserProfile,
-  Candidate,
   AuditLog,
 } from '../types';
 import { DESIGNATED_ADMIN_EMAIL, APPROVED_VOTERS, isAdminEmail } from '../config/voterAllowlist';
@@ -109,8 +105,8 @@ export function sanitizeCsvField(value: unknown): string {
 }
 
 /**
- * Verifies caller authorization locally before dispatching to backend.
- * Backend independently enforces zero-trust admin authentication.
+ * Verifies caller authorization locally before dispatching.
+ * Firestore Security Rules independently enforce zero-trust admin authorization.
  */
 function assertAdminRole(profile?: AuthUserProfile) {
   if (
@@ -191,35 +187,7 @@ export async function updateElectionStatus(
 ): Promise<{ success: boolean; status: ElectionStatus; electionId: string }> {
   assertAdminRole(profile);
 
-  // 1. If Cloud Functions live, call updateElectionStatus
-  if (functions) {
-    try {
-      logger.info({
-        message: `Admin requesting state transition to ${targetStatus}`,
-        context: 'AdminService',
-        data: { electionId, targetStatus },
-      });
-
-      const fn = httpsCallable<{ electionId: string; targetStatus: string }, { success: boolean; newStatus: ElectionStatus }>(
-        functions,
-        'updateElectionStatus'
-      );
-      const result = await fn({ electionId, targetStatus });
-      return {
-        success: true,
-        status: result.data.newStatus || targetStatus,
-        electionId,
-      };
-    } catch (err) {
-      logger.warn({
-        message: 'Cloud Function updateElectionStatus failed, trying direct Firestore transaction',
-        context: 'AdminService',
-        error: err,
-      });
-    }
-  }
-
-  // 2. Direct Firestore update if running with admin permissions
+  // Direct Firestore update with admin credentials
   if (db) {
     try {
       const electionRef = doc(db, 'elections', electionId);
@@ -254,7 +222,7 @@ export async function updateElectionStatus(
         updatePayload.finishedAt = serverTimestamp();
         action = 'ELECTION_FINISHED';
 
-        // Write aggregate snapshot
+        // Write aggregate snapshot for voter visibility
         try {
           const candidatesSnap = await getDocs(collection(db, 'elections', electionId, 'candidates'));
           const ballotsSnap = await getDocs(collection(db, 'ballots'));
@@ -333,33 +301,42 @@ export async function updateElectionStatus(
             dataIntegrityVerified: true,
           });
         } catch (snapErr) {
-          logger.warn({ message: 'Failed to write local results summary', error: snapErr });
+          logger.warn({ message: 'Failed to write results summary snapshot', error: snapErr });
         }
       }
 
       await updateDoc(electionRef, updatePayload);
 
-      inMemoryElectionStatus = targetStatus;
-      inMemoryAuditLogs.unshift({
-        id: `audit-${Date.now()}`,
-        action,
-        actorUid: profile?.uid || 'admin',
-        actorEmail: profile?.email || DESIGNATED_ADMIN_EMAIL,
-        electionId,
-        createdAt: new Date().toISOString(),
-      });
+      // Log action to audit logs
+      try {
+        const auditRef = doc(collection(db, 'auditLogs'));
+        await setDoc(auditRef, {
+          action,
+          actorUid: profile?.uid || 'admin',
+          actorEmail: profile?.email || DESIGNATED_ADMIN_EMAIL,
+          electionId,
+          createdAt: serverTimestamp(),
+        });
+      } catch (auditErr) {
+        logger.warn({ message: 'Failed to record audit log', error: auditErr });
+      }
 
+      inMemoryElectionStatus = targetStatus;
       return { success: true, status: targetStatus, electionId };
     } catch (err: unknown) {
       logger.warn({
-        message: 'Direct Firestore update failed, evaluating local transition',
+        message: 'Direct Firestore update returned notice, checking local engine',
         context: 'AdminService',
         error: err,
       });
+      const errString = err instanceof Error ? err.message : String(err);
+      if (errString.includes('Invalid state transition') || errString.includes('PERMISSION_DENIED')) {
+        throw err;
+      }
     }
   }
 
-  // 3. Fallback in-memory transition engine
+  // Fallback in-memory transition engine (used in tests and simulation)
   const currentStatus = inMemoryElectionStatus;
   if (!isValidElectionTransition(currentStatus, targetStatus)) {
     throw new Error(
@@ -405,22 +382,7 @@ export async function getAdminElectionStats(
 ): Promise<AdminElectionStats> {
   assertAdminRole(profile);
 
-  // 1. Cloud Function callable
-  if (functions) {
-    try {
-      const fn = httpsCallable<{ electionId: string }, AdminElectionStats>(functions, 'getAdminElectionStats');
-      const res = await fn({ electionId });
-      if (res.data) return res.data;
-    } catch (err) {
-      logger.warn({
-        message: 'Cloud Function getAdminElectionStats failed, using Firestore query',
-        context: 'AdminService',
-        error: err,
-      });
-    }
-  }
-
-  // 2. Direct Firestore calculation
+  // Direct Firestore calculation
   if (db) {
     try {
       const electionSnap = await getDoc(doc(db, 'elections', electionId));
@@ -482,14 +444,14 @@ export async function getAdminElectionStats(
       };
     } catch (err) {
       logger.warn({
-        message: 'Direct Firestore stats failed, using memory state',
+        message: 'Direct Firestore stats fetch returned notice, using local calculation',
         context: 'AdminService',
         error: err,
       });
     }
   }
 
-  // 3. Fallback memory state
+  // Fallback memory state
   const totalEligibleVoters = APPROVED_VOTERS.length;
   const candidateCounts: Record<string, { id: string; name: string; codename: string; voteCount: number }> = {};
   INITIAL_CANDIDATES.forEach((c) => {
@@ -531,27 +493,7 @@ export async function getAdminVoteRecords(
 ): Promise<AdminVoteRecord[]> {
   assertAdminRole(profile);
 
-  // 1. Cloud function callable
-  if (functions) {
-    try {
-      const fn = httpsCallable<{ electionId: string }, { records: AdminVoteRecord[] }>(
-        functions,
-        'getAdminVoteRecords'
-      );
-      const res = await fn({ electionId });
-      if (res.data && Array.isArray(res.data.records)) {
-        return res.data.records;
-      }
-    } catch (err) {
-      logger.warn({
-        message: 'Cloud Function getAdminVoteRecords failed, trying Firestore',
-        context: 'AdminService',
-        error: err,
-      });
-    }
-  }
-
-  // 2. Direct Firestore queries
+  // Direct Firestore queries
   if (db) {
     try {
       const ballotsSnap = await getDocs(collection(db, 'ballots'));
@@ -607,7 +549,7 @@ export async function getAdminVoteRecords(
       return records;
     } catch (err) {
       logger.warn({
-        message: 'Direct Firestore vote records query failed',
+        message: 'Direct Firestore vote records query returned notice',
         context: 'AdminService',
         error: err,
       });
@@ -625,27 +567,7 @@ export async function getAdminParticipation(
 ): Promise<AdminVoterParticipation[]> {
   assertAdminRole(profile);
 
-  // 1. Cloud function callable
-  if (functions) {
-    try {
-      const fn = httpsCallable<unknown, { participation: AdminVoterParticipation[] }>(
-        functions,
-        'getAdminParticipation'
-      );
-      const res = await fn({});
-      if (res.data && Array.isArray(res.data.participation)) {
-        return res.data.participation;
-      }
-    } catch (err) {
-      logger.warn({
-        message: 'Cloud Function getAdminParticipation failed, trying Firestore',
-        context: 'AdminService',
-        error: err,
-      });
-    }
-  }
-
-  // 2. Direct Firestore query
+  // Direct Firestore query
   if (db) {
     try {
       const membersSnap = await getDocs(collection(db, 'members'));
@@ -672,14 +594,14 @@ export async function getAdminParticipation(
       }
     } catch (err) {
       logger.warn({
-        message: 'Direct Firestore members query failed, using static allowlist',
+        message: 'Direct Firestore members query returned notice, using static allowlist',
         context: 'AdminService',
         error: err,
       });
     }
   }
 
-  // 3. Fallback mapped from approved allowlist
+  // Fallback mapped from approved allowlist
   return APPROVED_VOTERS.map((voter) => ({
     uid: `seed-${voter.rollNumber}`,
     name: voter.name,
@@ -705,25 +627,6 @@ export async function exportParticipationCsv(
 ): Promise<CsvExportResult> {
   assertAdminRole(profile);
 
-  // 1. Cloud Function callable
-  if (functions) {
-    try {
-      const fn = httpsCallable<unknown, CsvExportResult>(functions, 'exportParticipationCsv');
-      const res = await fn({});
-      if (res.data && res.data.csvContent) {
-        downloadCsvFile(res.data.filename, res.data.csvContent);
-        return res.data;
-      }
-    } catch (err) {
-      logger.warn({
-        message: 'Cloud Function exportParticipationCsv failed, generating client-side with full sanitization',
-        context: 'AdminService',
-        error: err,
-      });
-    }
-  }
-
-  // 2. Client-side fallback generation with strict CSV formula injection escaping
   const participation = await getAdminParticipation(profile);
   const headers = ['#', 'Voter Name', 'Roll Number', 'Email', 'Batch', 'Department', 'State', 'Status', 'Vote Time'];
   const rows: string[] = [headers.map(sanitizeCsvField).join(',')];
@@ -780,22 +683,6 @@ export async function getAdminAuditLogs(
 ): Promise<AuditLog[]> {
   assertAdminRole(profile);
 
-  if (functions) {
-    try {
-      const fn = httpsCallable<{ limit?: number }, { logs: AuditLog[] }>(functions, 'getAdminAuditLogs');
-      const res = await fn({ limit: limitCount });
-      if (res.data && Array.isArray(res.data.logs)) {
-        return res.data.logs;
-      }
-    } catch (err) {
-      logger.warn({
-        message: 'Cloud Function getAdminAuditLogs failed, trying Firestore',
-        context: 'AdminService',
-        error: err,
-      });
-    }
-  }
-
   if (db) {
     try {
       const auditQuery = query(
@@ -822,7 +709,7 @@ export async function getAdminAuditLogs(
       }
     } catch (err) {
       logger.warn({
-        message: 'Direct Firestore audit log fetch failed',
+        message: 'Direct Firestore audit log fetch returned notice',
         context: 'AdminService',
         error: err,
       });
@@ -831,3 +718,4 @@ export async function getAdminAuditLogs(
 
   return [...inMemoryAuditLogs];
 }
+

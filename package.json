@@ -10,8 +10,7 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "emulators": "firebase emulators:start",
-    "emulators:core": "firebase emulators:start --only auth,firestore,functions",
-    "build:functions": "npm --prefix functions run build"
+    "emulators:core": "firebase emulators:start --only auth,firestore,hosting"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

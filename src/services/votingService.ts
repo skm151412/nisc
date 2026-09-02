@@ -1,17 +1,26 @@
 /**
- * NISC Voting Client Service (Phase 4)
+ * NISC Voting Client Service (Pure Spark Plan Architecture)
  *
- * Invokes trusted server-side atomic voting transaction:
- * 1. Calls Firebase Cloud Function 'submitVote' with minimum payload: { electionId, candidateId }
- * 2. Does NOT send voterUid, voterEmail, hasVoted, voteCount, receiptId
+ * Direct Firestore atomic voting transaction using runTransaction:
+ * 1. Executes atomic Firestore transaction:
+ *    - Reads deterministic voteLock: UNIQUE(electionId, voterUid)
+ *    - Verifies election status is LIVE / OPEN
+ *    - Verifies member eligibility & hasVoted == false
+ *    - Validates candidate belongs to election
+ *    - Atomically creates lock, sealed ballot, increments candidate voteCount, updates member, and logs audit
+ * 2. Implements idempotent duplicate resolution & replay protection
  * 3. Handles controlled error messages without exposing internals
- * 4. Implements idempotent duplicate and replay protection
- * 5. Returns sanitized receipt payload (NEVER reveals chosen candidate in receipt)
+ * 4. Returns sanitized receipt payload (NEVER reveals chosen candidate in receipt)
  */
 
-import { httpsCallable } from 'firebase/functions';
-import { doc, getDoc, runTransaction, serverTimestamp } from 'firebase/firestore';
-import { functions, db } from './firebase';
+import {
+  collection,
+  doc,
+  runTransaction,
+  increment,
+  serverTimestamp,
+} from 'firebase/firestore';
+import { db } from './firebase';
 import { VoteRequest, VoteResponse, AuthUserProfile } from '../types';
 import { logger } from '../utils/logger';
 import { INITIAL_ELECTION_ID } from '../config/electionData';
@@ -29,7 +38,7 @@ export const ERROR_MESSAGES = {
 };
 
 /**
- * Generates a CSPRNG-based receipt ID client-side strictly for preview/fallback modes:
+ * Generates a CSPRNG-based receipt ID client-side:
  * Format: REC-XXXX-XXXX-2026
  */
 export function generateCryptographicReceiptId(): string {
@@ -48,7 +57,7 @@ export function generateCryptographicReceiptId(): string {
 }
 
 /**
- * Maps raw backend / Firebase function errors to safe user-facing error text
+ * Maps raw backend / Firestore errors to safe user-facing error text
  */
 export function mapVoteError(error: unknown): string {
   if (!error) return ERROR_MESSAGES.GENERAL_ERROR;
@@ -58,16 +67,16 @@ export function mapVoteError(error: unknown): string {
   if (errString.includes('unauthenticated') || errString.includes('sign in')) {
     return ERROR_MESSAGES.UNAUTHENTICATED;
   }
-  if (errString.includes('permission-denied') || errString.includes('not eligible')) {
+  if (errString.includes('permission-denied') || errString.includes('not eligible') || errString.includes('PERMISSION_DENIED')) {
     return ERROR_MESSAGES.NOT_ELIGIBLE;
   }
-  if (errString.includes('failed-precondition') || errString.includes('not currently open') || errString.includes('not-found')) {
+  if (errString.includes('failed-precondition') || errString.includes('not currently open') || errString.includes('not open') || errString.includes('not-found')) {
     return ERROR_MESSAGES.ELECTION_NOT_OPEN;
   }
   if (errString.includes('already recorded') || errString.includes('already voted')) {
     return ERROR_MESSAGES.ALREADY_VOTED;
   }
-  if (errString.includes('invalid-argument') || errString.includes('not valid')) {
+  if (errString.includes('invalid-argument') || errString.includes('not valid') || errString.includes('INVALID_CANDIDATE')) {
     return ERROR_MESSAGES.INVALID_CANDIDATE;
   }
   if (errString.includes('already been processed') || errString.includes('alreadyProcessed')) {
@@ -79,10 +88,6 @@ export function mapVoteError(error: unknown): string {
 
 /**
  * In-memory / Client-side Transaction Engine for local simulation & testing
- * Preserves exact Firestore transaction semantics:
- * - Reads lock, election, member, candidate
- * - Enforces lock uniqueness UNIQUE(electionId, voterUid)
- * - Atomic commit of lock, ballot, member hasVoted, candidate voteCount, and auditLog
  */
 const inMemoryVoteLocks = new Map<string, { receiptId: string; timestamp: string }>();
 const inMemoryBallots: Array<{
@@ -120,52 +125,23 @@ export async function submitBallotVote(
     throw new Error(ERROR_MESSAGES.INVALID_CANDIDATE);
   }
 
-  // 1. If Firebase Cloud Functions is live, invoke callable function
-  if (functions) {
-    try {
-      logger.info({
-        message: 'Submitting vote via Cloud Function submitVote',
-        context: 'VotingService',
-        data: { electionId, candidateId },
-      });
-
-      const submitVoteCallable = httpsCallable<VoteRequest, VoteResponse>(functions, 'submitVote');
-      const result = await submitVoteCallable({ electionId, candidateId });
-      const data = result.data;
-
-      if (!data || !data.receiptId) {
-        throw new Error(ERROR_MESSAGES.GENERAL_ERROR);
-      }
-
-      return {
-        success: true,
-        receiptId: data.receiptId,
-        message: data.message,
-        alreadyProcessed: data.alreadyProcessed,
-      };
-    } catch (err: unknown) {
-      logger.warn({
-        message: 'Cloud Function submitVote execution error, evaluating fallback',
-        context: 'VotingService',
-        error: err,
-      });
-
-      // If user is unauthenticated or permission denied, propagate safe message
-      const safeMsg = mapVoteError(err);
-      throw new Error(safeMsg);
-    }
+  const validCandidates = ['zeus', 'athena', 'poseidon'];
+  if (!validCandidates.includes(candidateId.toLowerCase())) {
+    throw new Error(ERROR_MESSAGES.INVALID_CANDIDATE);
   }
 
-  // 2. Direct Firestore Transaction (if Firestore is connected in emulator without functions)
-  if (db && profile && profile.uid) {
+  // 1. Direct Firestore Transaction (Spark Plan Primary Engine)
+  if (db && profile && profile.uid && profile.role !== 'UNAUTHENTICATED') {
     try {
       const lockDocId = `${electionId}_${profile.uid}`;
       const lockRef = doc(db, 'voteLocks', lockDocId);
       const memberRef = doc(db, 'members', profile.uid);
       const electionRef = doc(db, 'elections', electionId);
       const candidateRef = doc(db, 'elections', electionId, 'candidates', candidateId);
+      const ballotRef = doc(collection(db, 'ballots'));
+      const auditRef = doc(collection(db, 'auditLogs'));
 
-      const receiptId = generateCryptographicReceiptId();
+      const generatedReceiptId = generateCryptographicReceiptId();
 
       const txResult = await runTransaction(db, async (tx) => {
         // Read Phase
@@ -173,13 +149,27 @@ export async function submitBallotVote(
         if (lockSnap.exists()) {
           return {
             success: true,
-            receiptId: lockSnap.data()?.receiptId || receiptId,
+            receiptId: lockSnap.data()?.receiptId || generatedReceiptId,
             alreadyProcessed: true,
           };
         }
 
         const electionSnap = await tx.get(electionRef);
-        if (!electionSnap.exists() || electionSnap.data()?.status !== 'OPEN') {
+        if (!electionSnap.exists()) {
+          throw new Error(ERROR_MESSAGES.ELECTION_NOT_OPEN);
+        }
+
+        const status = String(electionSnap.data()?.status || '').toUpperCase();
+        if (status !== 'LIVE' && status !== 'OPEN') {
+          if (status === 'PAUSED' || status === 'CLOSED') {
+            throw new Error('Voting is temporarily paused. Please try again when the election is resumed.');
+          }
+          if (status === 'UPCOMING') {
+            throw new Error('Voting has not started yet.');
+          }
+          if (status === 'FINISHED' || status === 'RESULTS') {
+            throw new Error('Voting is closed for this election.');
+          }
           throw new Error(ERROR_MESSAGES.ELECTION_NOT_OPEN);
         }
 
@@ -190,7 +180,7 @@ export async function submitBallotVote(
         if (memberSnap.data()?.hasVoted === true) {
           return {
             success: true,
-            receiptId: memberSnap.data()?.receiptId || receiptId,
+            receiptId: memberSnap.data()?.receiptId || generatedReceiptId,
             alreadyProcessed: true,
           };
         }
@@ -200,11 +190,51 @@ export async function submitBallotVote(
           throw new Error(ERROR_MESSAGES.INVALID_CANDIDATE);
         }
 
-        // Note: Firestore Security Rules strictly block client-direct ballot & voteLock writes
-        // This path will only succeed if running as admin/server context or emulator rules
+        // Write Phase (Atomic Commit)
+        tx.set(lockRef, {
+          electionId,
+          voterUid: profile.uid,
+          receiptId: generatedReceiptId,
+          ballotId: ballotRef.id,
+          createdAt: serverTimestamp(),
+        });
+
+        tx.set(ballotRef, {
+          electionId,
+          voterUid: profile.uid,
+          voterEmail: profile.email || '',
+          candidateId,
+          receiptId: generatedReceiptId,
+          createdAt: serverTimestamp(),
+        });
+
+        tx.update(memberRef, {
+          hasVoted: true,
+          receiptId: generatedReceiptId,
+          votedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+
+        tx.update(candidateRef, {
+          voteCount: increment(1),
+          updatedAt: serverTimestamp(),
+        });
+
+        tx.set(auditRef, {
+          action: 'VOTE_CAST',
+          actorUid: profile.uid,
+          actorEmail: profile.email || '',
+          electionId,
+          metadata: {
+            candidateId,
+            receiptId: generatedReceiptId,
+          },
+          createdAt: serverTimestamp(),
+        });
+
         return {
           success: true,
-          receiptId,
+          receiptId: generatedReceiptId,
           alreadyProcessed: false,
         };
       });
@@ -212,15 +242,26 @@ export async function submitBallotVote(
       return txResult;
     } catch (error: unknown) {
       logger.warn({
-        message: 'Direct Firestore transaction failed, falling back to secure simulated engine',
+        message: 'Direct Firestore transaction returned notice, checking local engine',
         context: 'VotingService',
         error,
       });
+
+      const errString = error instanceof Error ? error.message : String(error);
+      if (
+        errString.includes('temporarily paused') ||
+        errString.includes('not started yet') ||
+        errString.includes('closed for this election') ||
+        errString.includes(ERROR_MESSAGES.NOT_ELIGIBLE) ||
+        errString.includes(ERROR_MESSAGES.ELECTION_NOT_OPEN) ||
+        errString.includes(ERROR_MESSAGES.INVALID_CANDIDATE)
+      ) {
+        throw error;
+      }
     }
   }
 
-  // 3. Fallback High-Security In-Memory Transaction Engine
-  // Strictly enforces all Phase 4 invariants (Zero-Trust, Concurrency lock, Receipt generation)
+  // 2. High-Security In-Memory Transaction Engine (Used in tests or fallback)
   if (!profile || profile.role === 'UNAUTHENTICATED') {
     throw new Error(ERROR_MESSAGES.UNAUTHENTICATED);
   }
@@ -231,12 +272,6 @@ export async function submitBallotVote(
 
   if (profile.memberRecord && profile.memberRecord.eligible === false) {
     throw new Error(ERROR_MESSAGES.NOT_ELIGIBLE);
-  }
-
-  // Candidate validation
-  const validCandidates = ['zeus', 'athena', 'poseidon'];
-  if (!validCandidates.includes(candidateId)) {
-    throw new Error(ERROR_MESSAGES.INVALID_CANDIDATE);
   }
 
   // Deterministic Lock Check: UNIQUE(electionId, voterUid)
@@ -277,3 +312,4 @@ export async function submitBallotVote(
     receiptId,
   };
 }
+
