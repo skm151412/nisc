@@ -29,7 +29,7 @@ export interface SeedResult {
  * Seeds the initial election configuration and candidate seats into Firestore.
  * Idempotent & Non-destructive: Does NOT overwrite existing ballots, votes, or election state.
  */
-export async function seedElectionSystem(adminUid?: string): Promise<SeedResult> {
+export async function seedElectionSystem(adminUid?: string, adminEmail?: string): Promise<SeedResult> {
   if (!db) {
     throw new Error('Firestore database is not initialized.');
   }
@@ -38,6 +38,15 @@ export async function seedElectionSystem(adminUid?: string): Promise<SeedResult>
   const uniqueCount = APPROVED_VOTER_EMAILS.length;
   if (uniqueCount !== 79) {
     const errorMsg = `CRITICAL DISCREPANCY: Expected exactly 79 approved unique voters, but found ${uniqueCount}. Seed operation halted.`;
+    logger.error({
+      message: errorMsg,
+      context: 'SeedService',
+    });
+    throw new Error(errorMsg);
+  }
+
+  if (APPROVED_VOTERS.length !== 79) {
+    const errorMsg = `CRITICAL DISCREPANCY: Expected exactly 79 approved voter records, but found ${APPROVED_VOTERS.length}. Seed operation halted.`;
     logger.error({
       message: errorMsg,
       context: 'SeedService',
@@ -121,9 +130,10 @@ export async function seedElectionSystem(adminUid?: string): Promise<SeedResult>
     // 3. Seed Admin Record if admin UID provided
     let adminSeeded = false;
     if (adminUid) {
+      const targetAdminEmail = normalizeEmail(adminEmail || DESIGNATED_ADMIN_EMAIL);
       const adminRef = doc(db, 'admins', adminUid);
       await setDoc(adminRef, {
-        email: DESIGNATED_ADMIN_EMAIL,
+        email: targetAdminEmail,
         active: true,
         createdAt: serverTimestamp(),
       }, { merge: true });

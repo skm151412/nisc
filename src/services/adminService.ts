@@ -57,6 +57,8 @@ export interface AdminElectionStats {
   openedAt?: string | null;
   closedAt?: string | null;
   resultsPublishedAt?: string | null;
+  isAuthoritativeFirestore?: boolean;
+  dataSourceNotice?: string;
 }
 
 export interface AdminVoteRecord {
@@ -72,6 +74,7 @@ export interface AdminVoteRecord {
   candidateCodename: string;
   receiptId: string;
   voteTime: string;
+  isAuthoritativeFirestore?: boolean;
 }
 
 export interface AdminVoterParticipation {
@@ -86,6 +89,30 @@ export interface AdminVoterParticipation {
   eligible: boolean;
   receiptId?: string | null;
   votedAt?: string | null;
+  isAuthoritativeFirestore?: boolean;
+}
+
+const DEFAULT_FIRESTORE_TIMEOUT_MS = 8000;
+
+/**
+ * Executes a Promise with a strict timeout to prevent indefinite dashboard hang.
+ */
+async function runWithTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number = DEFAULT_FIRESTORE_TIMEOUT_MS,
+  opName: string = 'Firestore query'
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`Timeout (${timeoutMs}ms) awaiting ${opName}`));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer!);
+  }
 }
 
 export interface CsvExportResult {
@@ -418,77 +445,93 @@ export async function getAdminElectionStats(
 ): Promise<AdminElectionStats> {
   assertAdminRole(profile);
 
-  // Direct Firestore calculation
+  // Direct Firestore calculation with parallel timeout-guarded queries
   if (db) {
     try {
-      const electionSnap = await getDoc(doc(db, 'elections', electionId));
-      const candidatesSnap = await getDocs(collection(db, 'elections', electionId, 'candidates'));
-      const ballotsSnap = await getDocs(collection(db, 'ballots'));
-      const membersSnap = await getDocs(collection(db, 'members'));
+      const [electionRes, candidatesRes, ballotsRes, membersRes] = await Promise.allSettled([
+        runWithTimeout(getDoc(doc(db, 'elections', electionId)), 8000, 'election document'),
+        runWithTimeout(getDocs(collection(db, 'elections', electionId, 'candidates')), 8000, 'candidates subcollection'),
+        runWithTimeout(getDocs(collection(db, 'ballots')), 8000, 'ballots collection'),
+        runWithTimeout(getDocs(collection(db, 'members')), 8000, 'members collection'),
+      ]);
 
-      const totalEligibleVoters = membersSnap.size || APPROVED_VOTERS.length;
-      const votesCast = ballotsSnap.size;
-      const remainingVoters = Math.max(0, totalEligibleVoters - votesCast);
-      const participationRate = totalEligibleVoters > 0 ? (votesCast / totalEligibleVoters) * 100 : 0;
+      const electionSnap = electionRes.status === 'fulfilled' ? electionRes.value : null;
+      const candidatesSnap = candidatesRes.status === 'fulfilled' ? candidatesRes.value : null;
+      const ballotsSnap = ballotsRes.status === 'fulfilled' ? ballotsRes.value : null;
+      const membersSnap = membersRes.status === 'fulfilled' ? membersRes.value : null;
 
-      const candidateCounts: Record<string, { id: string; name: string; codename: string; voteCount: number }> = {};
-      let sumCandidateVotes = 0;
+      // Check if at least one Firestore query succeeded
+      const atLeastOneSucceeded = electionSnap !== null || candidatesSnap !== null || ballotsSnap !== null || membersSnap !== null;
 
-      // Authoritative vote counting from sealed immutable ballots (SEC-02 / SEC-03)
-      const ballotCounts: Record<string, number> = {};
-      ballotsSnap.forEach((bDoc) => {
-        const cId = bDoc.data()?.candidateId;
-        if (cId) {
-          ballotCounts[cId] = (ballotCounts[cId] || 0) + 1;
+      if (atLeastOneSucceeded) {
+        const totalEligibleVoters = (membersSnap && membersSnap.size > 0) ? membersSnap.size : APPROVED_VOTERS.length;
+        const votesCast = ballotsSnap ? ballotsSnap.size : 0;
+        const remainingVoters = Math.max(0, totalEligibleVoters - votesCast);
+        const participationRate = totalEligibleVoters > 0 ? (votesCast / totalEligibleVoters) * 100 : 0;
+
+        const candidateCounts: Record<string, { id: string; name: string; codename: string; voteCount: number }> = {};
+        let sumCandidateVotes = 0;
+
+        // Authoritative vote counting from sealed immutable ballots (SEC-02 / SEC-03)
+        const ballotCounts: Record<string, number> = {};
+        if (ballotsSnap) {
+          ballotsSnap.forEach((bDoc) => {
+            const cId = bDoc.data()?.candidateId;
+            if (cId) {
+              ballotCounts[cId] = (ballotCounts[cId] || 0) + 1;
+            }
+          });
         }
-      });
 
-      if (!candidatesSnap.empty) {
-        candidatesSnap.forEach((docSnap) => {
-          const d = docSnap.data();
-          const count = ballotCounts[docSnap.id] || 0;
-          sumCandidateVotes += count;
-          candidateCounts[docSnap.id] = {
-            id: docSnap.id,
-            name: d.name || docSnap.id,
-            codename: d.codename || '',
-            voteCount: count,
-          };
-        });
-      } else {
-        INITIAL_CANDIDATES.forEach((c) => {
-          const count = ballotCounts[c.id] || 0;
-          sumCandidateVotes += count;
-          candidateCounts[c.id] = {
-            id: c.id,
-            name: c.name,
-            codename: c.codename,
-            voteCount: count,
-          };
-        });
+        if (candidatesSnap && !candidatesSnap.empty) {
+          candidatesSnap.forEach((docSnap) => {
+            const d = docSnap.data();
+            const count = ballotCounts[docSnap.id] || 0;
+            sumCandidateVotes += count;
+            candidateCounts[docSnap.id] = {
+              id: docSnap.id,
+              name: d.name || docSnap.id,
+              codename: d.codename || '',
+              voteCount: count,
+            };
+          });
+        } else {
+          INITIAL_CANDIDATES.forEach((c) => {
+            const count = ballotCounts[c.id] || 0;
+            sumCandidateVotes += count;
+            candidateCounts[c.id] = {
+              id: c.id,
+              name: c.name,
+              codename: c.codename,
+              voteCount: count,
+            };
+          });
+        }
+
+        const electionData = electionSnap && electionSnap.exists() ? electionSnap.data() : null;
+        const status = (electionData?.status || inMemoryElectionStatus) as ElectionStatus;
+
+        return {
+          electionId,
+          status: status || ElectionStatus.UPCOMING,
+          totalEligibleVoters,
+          votesCast,
+          remainingVoters,
+          participationRate: Number(participationRate.toFixed(1)),
+          candidates: candidateCounts,
+          consistency: {
+            isConsistent: votesCast === sumCandidateVotes && votesCast <= totalEligibleVoters,
+            votesCastMatchesBallots: votesCast === sumCandidateVotes,
+            votesCastWithinLimit: votesCast <= totalEligibleVoters,
+            ballotsCount: votesCast,
+            candidateVotesSum: sumCandidateVotes,
+          },
+          openedAt: electionData?.openedAt?.toDate?.()?.toISOString() || inMemoryOpenedAt,
+          closedAt: electionData?.closedAt?.toDate?.()?.toISOString() || inMemoryClosedAt,
+          resultsPublishedAt: electionData?.resultsPublishedAt?.toDate?.()?.toISOString() || inMemoryResultsPublishedAt,
+          isAuthoritativeFirestore: true,
+        };
       }
-
-      const status = (electionSnap.exists() ? electionSnap.data()?.status : inMemoryElectionStatus) as ElectionStatus;
-
-      return {
-        electionId,
-        status: status || ElectionStatus.UPCOMING,
-        totalEligibleVoters,
-        votesCast,
-        remainingVoters,
-        participationRate: Number(participationRate.toFixed(1)),
-        candidates: candidateCounts,
-        consistency: {
-          isConsistent: votesCast === sumCandidateVotes && votesCast <= totalEligibleVoters,
-          votesCastMatchesBallots: votesCast === sumCandidateVotes,
-          votesCastWithinLimit: votesCast <= totalEligibleVoters,
-          ballotsCount: votesCast,
-          candidateVotesSum: sumCandidateVotes,
-        },
-        openedAt: electionSnap.data()?.openedAt?.toDate?.()?.toISOString() || inMemoryOpenedAt,
-        closedAt: electionSnap.data()?.closedAt?.toDate?.()?.toISOString() || inMemoryClosedAt,
-        resultsPublishedAt: electionSnap.data()?.resultsPublishedAt?.toDate?.()?.toISOString() || inMemoryResultsPublishedAt,
-      };
     } catch (err) {
       logger.warn({
         message: 'Direct Firestore stats fetch returned notice, using local calculation',
@@ -498,7 +541,7 @@ export async function getAdminElectionStats(
     }
   }
 
-  // Fallback memory state
+  // Safe fallback memory state (No fabricated votes: votesCast = 0)
   const totalEligibleVoters = APPROVED_VOTERS.length;
   const candidateCounts: Record<string, { id: string; name: string; codename: string; voteCount: number }> = {};
   INITIAL_CANDIDATES.forEach((c) => {
@@ -528,6 +571,8 @@ export async function getAdminElectionStats(
     openedAt: inMemoryOpenedAt,
     closedAt: inMemoryClosedAt,
     resultsPublishedAt: inMemoryResultsPublishedAt,
+    isAuthoritativeFirestore: false,
+    dataSourceNotice: 'Operating in local standby baseline (live Firestore connection pending or unavailable).',
   };
 }
 
@@ -540,23 +585,34 @@ export async function getAdminVoteRecords(
 ): Promise<AdminVoteRecord[]> {
   assertAdminRole(profile);
 
-  // Direct Firestore queries
+  // Direct Firestore queries with concurrency and timeout protection
   if (db) {
     try {
-      const ballotsSnap = await getDocs(collection(db, 'ballots'));
-      const membersSnap = await getDocs(collection(db, 'members'));
+      const [ballotsRes, membersRes] = await Promise.allSettled([
+        runWithTimeout(getDocs(collection(db, 'ballots')), 8000, 'ballots collection'),
+        runWithTimeout(getDocs(collection(db, 'members')), 8000, 'members collection'),
+      ]);
+
+      const ballotsSnap = ballotsRes.status === 'fulfilled' ? ballotsRes.value : null;
+      const membersSnap = membersRes.status === 'fulfilled' ? membersRes.value : null;
+
+      if (!ballotsSnap) {
+        return [];
+      }
 
       const memberMap = new Map<string, { name: string; rollNumber: string; batch: string; department: string; email: string }>();
-      membersSnap.forEach((docSnap) => {
-        const d = docSnap.data();
-        memberMap.set(docSnap.id, {
-          name: d.name || '',
-          rollNumber: d.rollNumber || '',
-          batch: d.batch || '',
-          department: d.department || '',
-          email: d.email || '',
+      if (membersSnap) {
+        membersSnap.forEach((docSnap) => {
+          const d = docSnap.data();
+          memberMap.set(docSnap.id, {
+            name: d.name || '',
+            rollNumber: d.rollNumber || '',
+            batch: d.batch || '',
+            department: d.department || '',
+            email: d.email || '',
+          });
         });
-      });
+      }
 
       const candidateMap: Record<string, { name: string; codename: string }> = {
         athena: { name: 'Paridhi Gupta', codename: 'ISiS' },
@@ -589,6 +645,7 @@ export async function getAdminVoteRecords(
           candidateCodename: cand.codename,
           receiptId: b.receiptId || 'REC-XXXX-XXXX-2026',
           voteTime: b.createdAt?.toDate?.()?.toISOString() || new Date().toISOString(),
+          isAuthoritativeFirestore: true,
         });
       });
 
@@ -607,18 +664,18 @@ export async function getAdminVoteRecords(
 }
 
 /**
- * Retrieves all 70 eligible voter records with participation status.
+ * Retrieves all eligible voter records with participation status.
  */
 export async function getAdminParticipation(
   profile?: AuthUserProfile
 ): Promise<AdminVoterParticipation[]> {
   assertAdminRole(profile);
 
-  // Direct Firestore query
+  // Direct Firestore query with timeout protection
   if (db) {
     try {
-      const membersSnap = await getDocs(collection(db, 'members'));
-      if (!membersSnap.empty) {
+      const membersSnap = await runWithTimeout(getDocs(collection(db, 'members')), 8000, 'members collection');
+      if (membersSnap && !membersSnap.empty) {
         const list: AdminVoterParticipation[] = [];
         membersSnap.forEach((docSnap) => {
           const d = docSnap.data();
@@ -634,6 +691,32 @@ export async function getAdminParticipation(
             eligible: d.eligible !== false,
             receiptId: d.receiptId || null,
             votedAt: d.votedAt?.toDate?.()?.toISOString() || null,
+            isAuthoritativeFirestore: true,
+          });
+        });
+        list.sort((a, b) => a.rollNumber.localeCompare(b.rollNumber));
+        return list;
+      }
+
+      // If members collection is empty (e.g. before any student logins), query approvedVoters
+      const approvedSnap = await runWithTimeout(getDocs(collection(db, 'approvedVoters')), 8000, 'approvedVoters collection');
+      if (approvedSnap && !approvedSnap.empty) {
+        const list: AdminVoterParticipation[] = [];
+        approvedSnap.forEach((docSnap) => {
+          const d = docSnap.data();
+          list.push({
+            uid: `approved-${docSnap.id}`,
+            name: d.name || `Student (${d.rollNumber || ''})`,
+            rollNumber: d.rollNumber || '',
+            email: d.email || docSnap.id,
+            batch: d.batch || '',
+            department: d.department || '',
+            state: d.state || 'ACTIVE',
+            hasVoted: false,
+            eligible: d.eligible !== false,
+            receiptId: null,
+            votedAt: null,
+            isAuthoritativeFirestore: true,
           });
         });
         list.sort((a, b) => a.rollNumber.localeCompare(b.rollNumber));
@@ -648,7 +731,7 @@ export async function getAdminParticipation(
     }
   }
 
-  // Fallback mapped from approved allowlist
+  // Safe fallback mapped from approved allowlist (all 79 voters)
   return APPROVED_VOTERS.map((voter) => ({
     uid: `seed-${voter.rollNumber}`,
     name: voter.name,
@@ -661,6 +744,7 @@ export async function getAdminParticipation(
     eligible: true,
     receiptId: null,
     votedAt: null,
+    isAuthoritativeFirestore: false,
   })).sort((a, b) => a.rollNumber.localeCompare(b.rollNumber));
 }
 
@@ -742,7 +826,7 @@ export async function getAdminAuditLogs(
         orderBy('createdAt', 'desc'),
         firestoreLimit(limitCount)
       );
-      const snap = await getDocs(auditQuery);
+      const snap = await runWithTimeout(getDocs(auditQuery), 8000, 'auditLogs query');
       if (!snap.empty) {
         const logs: AuditLog[] = [];
         snap.forEach((docSnap) => {

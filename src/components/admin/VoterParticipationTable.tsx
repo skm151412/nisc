@@ -62,7 +62,7 @@ export const VoterParticipationTable: React.FC<VoterParticipationTableProps> = (
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-base font-bold text-slate-900 tracking-tight">Voter Participation (All 70 Members)</h2>
+            <h2 className="text-base font-bold text-slate-900 tracking-tight">Voter Participation (All {voters.length || 79} Members)</h2>
             <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
               {votedCount} Voted • {notVotedCount} Pending
             </span>
